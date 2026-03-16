@@ -15,6 +15,160 @@ const PX = 2; // 1ドット=2px
 function px(x,y,w,h,c) { ctx.fillStyle=c; ctx.fillRect(Math.round(x),Math.round(y),w*PX,h*PX); }
 function pxRect(x,y,w,h,c) { ctx.fillStyle=c; ctx.fillRect(Math.round(x),Math.round(y),w,h); }
 
+// ============================================================
+//  8bit サウンドシステム（Web Audio API チップチューン）
+// ============================================================
+let audioCtx = null;
+let masterGain = null;
+let bgmPlaying = false;
+let bgmOscs = [];
+let bgmInterval = null;
+
+function initAudio() {
+    if (audioCtx) return;
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = 0.3;
+    masterGain.connect(audioCtx.destination);
+}
+
+// 基本チップチューン音生成
+function playTone(freq, duration, type='square', vol=0.3, slide=0) {
+    if (!audioCtx) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    if (slide) osc.frequency.linearRampToValueAtTime(freq+slide, audioCtx.currentTime+duration);
+    gain.gain.setValueAtTime(vol * 0.3, audioCtx.currentTime);
+    gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(masterGain);
+    osc.start(audioCtx.currentTime);
+    osc.stop(audioCtx.currentTime + duration);
+}
+
+// ノイズ（爆発・被弾用）
+function playNoise(duration, vol=0.3) {
+    if (!audioCtx) return;
+    const bufSize = audioCtx.sampleRate * duration;
+    const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i=0;i<bufSize;i++) data[i] = Math.random()*2-1;
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    const gain = audioCtx.createGain();
+    gain.gain.setValueAtTime(vol * 0.3, audioCtx.currentTime);
+    gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + duration);
+    src.connect(gain);
+    gain.connect(masterGain);
+    src.start(audioCtx.currentTime);
+}
+
+// ---- 効果音 ----
+function sfxJump() {
+    playTone(200, 0.15, 'square', 0.3, 400);
+}
+function sfxShoot() {
+    playTone(800, 0.06, 'square', 0.25);
+    playNoise(0.04, 0.15);
+}
+function sfxShotgun() {
+    playNoise(0.08, 0.4);
+    playTone(200, 0.08, 'square', 0.2);
+}
+function sfxEnemyHit() {
+    playTone(300, 0.08, 'square', 0.2, -100);
+}
+function sfxEnemyDie() {
+    playTone(400, 0.08, 'square', 0.3);
+    setTimeout(()=>playTone(300, 0.08, 'square', 0.3), 50);
+    setTimeout(()=>playTone(200, 0.12, 'square', 0.25), 100);
+    playNoise(0.15, 0.2);
+}
+function sfxPlayerHit() {
+    playTone(150, 0.15, 'square', 0.35, -80);
+    playNoise(0.1, 0.25);
+}
+function sfxItemPickup() {
+    playTone(523, 0.07, 'square', 0.25);
+    setTimeout(()=>playTone(659, 0.07, 'square', 0.25), 70);
+    setTimeout(()=>playTone(784, 0.1, 'square', 0.3), 140);
+}
+function sfxStomp() {
+    playTone(500, 0.05, 'square', 0.3);
+    setTimeout(()=>playTone(800, 0.1, 'square', 0.25), 50);
+}
+function sfxGoal() {
+    const notes = [523, 659, 784, 1047];
+    notes.forEach((n,i) => setTimeout(()=>playTone(n, 0.15, 'square', 0.3), i*120));
+}
+function sfxDeath() {
+    const notes = [400, 350, 300, 250, 200, 150];
+    notes.forEach((n,i) => setTimeout(()=>playTone(n, 0.2, 'square', 0.3), i*150));
+}
+
+// ---- BGM（8bitループ） ----
+const BGM_TEMPO = 180; // BPM
+const BGM_BEAT = 60000 / BGM_TEMPO; // ms per beat
+
+// ダークなメロディ（音程周波数）
+const NOTE = {
+    C3:131,D3:147,Eb3:156,E3:165,F3:175,G3:196,Ab3:208,A3:220,Bb3:233,B3:247,
+    C4:262,D4:294,Eb4:311,E4:330,F4:349,G4:392,Ab4:415,A4:440,Bb4:466,B4:494,
+    C5:523,D5:587,Eb5:622,E5:659,F5:698,G5:784,Ab5:831,
+    R:0
+};
+
+// メロディ（Cマイナー風ダークテーマ）
+const bgmMelody = [
+    NOTE.C4, NOTE.Eb4, NOTE.G4, NOTE.C4,
+    NOTE.Ab3, NOTE.Eb4, NOTE.G4, NOTE.R,
+    NOTE.Bb3, NOTE.D4, NOTE.F4, NOTE.Bb3,
+    NOTE.G3, NOTE.D4, NOTE.F4, NOTE.R,
+    NOTE.C4, NOTE.Eb4, NOTE.Ab4, NOTE.G4,
+    NOTE.F4, NOTE.Eb4, NOTE.D4, NOTE.C4,
+    NOTE.Bb3, NOTE.D4, NOTE.G4, NOTE.F4,
+    NOTE.Eb4, NOTE.D4, NOTE.C4, NOTE.R,
+];
+
+// ベースライン
+const bgmBass = [
+    NOTE.C3, NOTE.R, NOTE.C3, NOTE.G3,
+    NOTE.Ab3, NOTE.R, NOTE.Ab3, NOTE.Eb3,
+    NOTE.Bb3, NOTE.R, NOTE.Bb3, NOTE.F3,
+    NOTE.G3, NOTE.R, NOTE.G3, NOTE.D3,
+    NOTE.C3, NOTE.R, NOTE.C3, NOTE.G3,
+    NOTE.F3, NOTE.R, NOTE.F3, NOTE.C3,
+    NOTE.Bb3, NOTE.R, NOTE.Bb3, NOTE.F3,
+    NOTE.G3, NOTE.R, NOTE.G3, NOTE.R,
+];
+
+let bgmStep = 0;
+
+function startBGM() {
+    if (bgmPlaying) return;
+    bgmPlaying = true;
+    bgmStep = 0;
+    bgmInterval = setInterval(()=>{
+        if (!audioCtx || state === S.TITLE) return;
+        const i = bgmStep % bgmMelody.length;
+        const mel = bgmMelody[i];
+        const bas = bgmBass[i];
+        if (mel > 0) playTone(mel, BGM_BEAT/1000 * 0.8, 'square', 0.12);
+        if (bas > 0) playTone(bas, BGM_BEAT/1000 * 0.8, 'triangle', 0.15);
+        // ドラム（4拍ごとにキック、2拍目・4拍目にハイハット）
+        if (i%4===0) playNoise(0.06, 0.12);
+        if (i%2===1) playNoise(0.02, 0.06);
+        bgmStep++;
+    }, BGM_BEAT);
+}
+
+function stopBGM() {
+    bgmPlaying = false;
+    if (bgmInterval) { clearInterval(bgmInterval); bgmInterval = null; }
+}
+
 // ---- 定数 ----
 const GRAVITY     = 0.20;    // ふわっとジャンプ（滞空1.5倍）
 const FRICTION    = 0.78;
@@ -47,7 +201,7 @@ canvas.addEventListener('mousemove', e => {
     mouse.x = (e.clientX - r.left) * (canvas.width  / r.width);
     mouse.y = (e.clientY - r.top)  * (canvas.height / r.height);
 });
-canvas.addEventListener('mousedown', e => { if (e.button === 0) mouse.down = true; });
+canvas.addEventListener('mousedown', e => { if (e.button === 0) { mouse.down = true; initAudio(); } });
 canvas.addEventListener('mouseup',   e => { if (e.button === 0) mouse.down = false; });
 
 // ---- キー ----
@@ -55,6 +209,7 @@ const keys = {};
 window.addEventListener('keydown', e => {
     keys[e.code] = true;
     if (['Space','ArrowUp','ArrowDown'].includes(e.code)) e.preventDefault();
+    initAudio(); // 初回ユーザー操作でAudio初期化
     if (state === S.TITLE && e.code === 'Space') startGame();
     if (state === S.OVER  && e.code === 'Space') resetGame();
     if (state === S.CLEAR && e.code === 'Space') resetGame();
@@ -355,11 +510,12 @@ class Enemy {
         this.hp -= dmg;
         shakeAmt = Math.max(shakeAmt, 3);
         spawnParticles(this.x+this.w/2, this.y+this.h/2, '#cc0000', 5, 3);
-        if (this.hp <= 0) this.die();
+        if (this.hp <= 0) this.die(); else sfxEnemyHit();
     }
     die() {
         this.alive = false;
         score += this.scoreVal || 100;
+        sfxEnemyDie();
         spawnParticles(this.x+this.w/2, this.y+this.h/2, this.color, 18, 5);
         spawnParticles(this.x+this.w/2, this.y+this.h/2, '#660000', 12, 4);
         shakeAmt = Math.max(shakeAmt, 6);
@@ -858,6 +1014,7 @@ function updatePlayer() {
     if ((keys['KeyW']||keys['ArrowUp']||keys['Space']) && player.onGround) {
         player.vy = jumpF;
         spawnParticles(player.x+player.w/2, player.y+player.h, '#444', 6, 2);
+        sfxJump();
     }
     player.vy += GRAVITY;
     player.vx *= FRICTION;
@@ -911,6 +1068,7 @@ function updatePlayer() {
             player.vy = BASE_JUMP_FORCE*0.65;
             score += 50;
             shakeAmt = 7;
+            sfxStomp();
         } else if (player.invincible<=0) {
             playerHit(25);
         }
@@ -933,8 +1091,10 @@ function updatePlayer() {
     // アイテム取得
     for (const it of items) {
         if (it.collected) continue;
-        if (rectsOverlap({x:player.x,y:player.y,w:player.w,h:player.h},{x:it.x-15,y:it.y-15,w:30,h:30}))
+        if (rectsOverlap({x:player.x,y:player.y,w:player.w,h:player.h},{x:it.x-15,y:it.y-15,w:30,h:30})) {
             it.applyTo();
+            sfxItemPickup();
+        }
     }
 
     // ゴール（敵を全滅させないと進めない）
@@ -942,7 +1102,8 @@ function updatePlayer() {
     if (goal && enemiesAlive === 0 && rectsOverlap({x:player.x,y:player.y,w:player.w,h:player.h}, goal)) {
         score += 500;
         currentLevelIdx++;
-        if (currentLevelIdx >= LEVELS.length) state=S.CLEAR;
+        sfxGoal();
+        if (currentLevelIdx >= LEVELS.length) { state=S.CLEAR; stopBGM(); }
         else { spawnParticles(player.x+player.w/2,player.y,'#f1c40f',20,5); loadLevel(currentLevelIdx); }
     }
 
@@ -958,7 +1119,8 @@ function playerHit(dmg) {
     player.invincible = 80;
     shakeAmt = 12;
     spawnParticles(player.x+player.w/2, player.y+player.h/2, '#ff0000', 10, 4);
-    if (player.hp<=0) { player.hp=0; state=S.OVER; }
+    sfxPlayerHit();
+    if (player.hp<=0) { player.hp=0; state=S.OVER; sfxDeath(); stopBGM(); }
 }
 
 // ============================================================
@@ -969,6 +1131,7 @@ function fireWeapon() {
     const up  = player.upgrades;
     const cd  = Math.max(1, W.cd / up.fireRate | 0);
     player.fireCd = cd;
+    if (player.weapon === 'SHOTGUN') sfxShotgun(); else sfxShoot();
 
     const pellets  = (W.pellets||1) + (player.weapon==='SHOTGUN' ? up.multiShot-1 : 0);
     const multiCnt = player.weapon==='SHOTGUN' ? pellets : up.multiShot;
@@ -1325,8 +1488,9 @@ function startGame() {
     pickupTexts=[]; enemyBullets=[];
     loadLevel(0);
     state=S.PLAY;
+    startBGM();
 }
-function resetGame() { startGame(); }
+function resetGame() { stopBGM(); startGame(); }
 
 // ============================================================
 //  メインループ
