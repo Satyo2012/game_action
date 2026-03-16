@@ -444,7 +444,7 @@ class Enemy {
 // ゾンビ（低速・壁で折り返し・たまに射撃）
 class Zombie extends Enemy {
     constructor(x, y) {
-        super(x, y, 30, 40, 60, 1.2, '#4a0e0e', 0.5);
+        super(x, y, 30, 40, 60, 0.7, '#4a0e0e', 0.5);
         this.vx = (Math.random()<0.5?1:-1)*this.spd;
         this.scoreVal = 120;
         this.shootCd = 120 + Math.random()*60|0;
@@ -486,24 +486,97 @@ class Zombie extends Enemy {
     }
 }
 
-// シェード（高速・飛行）
+// シェード（飛行・上空旋回→急降下攻撃）
 class Shade extends Enemy {
     constructor(x, y) {
-        super(x, y, 26, 26, 35, 2.5, '#2200aa', 0.4);
+        super(x, y, 26, 26, 35, 1.5, '#2200aa', 0.4);
         this.scoreVal = 150;
         this.angle = 0;
+        // 行動状態: 'hover'=上空旋回, 'dive'=急降下, 'retreat'=上昇帰還
+        this.mode = 'hover';
+        this.hoverTimer = 0;
+        this.hoverAngle = Math.random() * Math.PI * 2;
+        this.diveTimer = 0;
+        this.targetX = 0;
+        this.targetY = 0;
     }
     update() {
         this.t++;
-        const dx = player.x+player.w/2 - (this.x+this.w/2);
-        const dy = player.y+player.h/2 - (this.y+this.h/2);
-        const dist = Math.sqrt(dx*dx+dy*dy) || 1;
-        this.vx += (dx/dist)*0.18;
-        this.vy += (dy/dist)*0.18;
-        const spd = Math.sqrt(this.vx*this.vx+this.vy*this.vy);
-        if (spd > this.spd) { this.vx=this.vx/spd*this.spd; this.vy=this.vy/spd*this.spd; }
-        this.x += this.vx; this.y += this.vy;
+        const px = player.x + player.w/2;
+        const py = player.y + player.h/2;
+        const cx = this.x + this.w/2;
+        const cy = this.y + this.h/2;
+
+        if (this.mode === 'hover') {
+            // プレイヤーの上空を旋回（80-120px上）
+            this.hoverAngle += 0.025;
+            this.hoverTimer++;
+            const orbitR = 80;
+            const targetX = px + Math.cos(this.hoverAngle) * orbitR;
+            const targetY = py - 110 + Math.sin(this.hoverAngle * 2) * 20;
+            this.vx += (targetX - cx) * 0.02;
+            this.vy += (targetY - cy) * 0.02;
+            this.vx *= 0.92;
+            this.vy *= 0.92;
+            // 一定時間旋回したら急降下
+            if (this.hoverTimer > 120 + Math.random() * 60) {
+                this.mode = 'dive';
+                this.diveTimer = 0;
+                this.targetX = px;
+                this.targetY = py;
+            }
+        } else if (this.mode === 'dive') {
+            // プレイヤーの位置へ急降下
+            this.diveTimer++;
+            const dx = this.targetX - cx;
+            const dy = this.targetY - cy;
+            const dist = Math.sqrt(dx*dx + dy*dy) || 1;
+            this.vx += (dx/dist) * 0.5;
+            this.vy += (dy/dist) * 0.5;
+            const spd = Math.sqrt(this.vx*this.vx + this.vy*this.vy);
+            const maxDiveSpd = 4;
+            if (spd > maxDiveSpd) { this.vx = this.vx/spd*maxDiveSpd; this.vy = this.vy/spd*maxDiveSpd; }
+            // 突っ込んだか時間切れで上昇帰還
+            if (this.diveTimer > 60 || dist < 20) {
+                this.mode = 'retreat';
+                this.diveTimer = 0;
+            }
+        } else if (this.mode === 'retreat') {
+            // 上空へ戻る
+            this.diveTimer++;
+            this.vx *= 0.95;
+            this.vy -= 0.3;
+            this.vy *= 0.95;
+            if (this.diveTimer > 50) {
+                this.mode = 'hover';
+                this.hoverTimer = 0;
+                this.hoverAngle = Math.atan2(cy - py, cx - px);
+            }
+        }
+
+        // 壁との衝突（貫通防止）
+        this.x += this.vx;
+        const tilesX = getTilesAround(this.x, this.y, this.w, this.h);
+        for (const t of tilesX) {
+            if (rectsOverlap({x:this.x,y:this.y,w:this.w,h:this.h}, t)) {
+                if (this.vx > 0) this.x = t.x - this.w;
+                else this.x = t.x + t.w;
+                this.vx *= -0.5;
+            }
+        }
+        this.y += this.vy;
+        const tilesY = getTilesAround(this.x, this.y, this.w, this.h);
+        for (const t of tilesY) {
+            if (rectsOverlap({x:this.x,y:this.y,w:this.w,h:this.h}, t)) {
+                if (this.vy > 0) this.y = t.y - this.h;
+                else this.y = t.y + t.h;
+                this.vy *= -0.5;
+                if (this.mode === 'dive') { this.mode = 'retreat'; this.diveTimer = 0; }
+            }
+        }
+
         this.angle = Math.atan2(this.vy, this.vx);
+        if (this.y > canvas.height + 100) this.die();
     }
     draw(camX) {
         if (!this.alive) return;
@@ -512,17 +585,19 @@ class Shade extends Enemy {
         ctx.save();
         ctx.translate(sx, sy);
         ctx.rotate(this.angle);
-        ctx.shadowBlur = 14; ctx.shadowColor = '#4400cc';
-        ctx.fillStyle = '#0d0022';
+        const diving = this.mode === 'dive';
+        ctx.shadowBlur = diving ? 22 : 14;
+        ctx.shadowColor = diving ? '#ff4400' : '#4400cc';
+        ctx.fillStyle = diving ? '#220008' : '#0d0022';
         // 菱形
         ctx.beginPath();
         ctx.moveTo(18,0); ctx.lineTo(0,-10); ctx.lineTo(-10,0); ctx.lineTo(0,10);
         ctx.closePath(); ctx.fill();
-        ctx.strokeStyle = '#6600ff'; ctx.lineWidth = 1.5;
+        ctx.strokeStyle = diving ? '#ff4400' : '#6600ff'; ctx.lineWidth = 1.5;
         ctx.stroke();
         // 目
-        ctx.fillStyle = '#aa00ff';
-        ctx.shadowBlur = 10; ctx.shadowColor = '#aa00ff';
+        ctx.fillStyle = diving ? '#ff6600' : '#aa00ff';
+        ctx.shadowBlur = 10; ctx.shadowColor = diving ? '#ff6600' : '#aa00ff';
         ctx.beginPath();
         ctx.arc(6, -2, 3, 0, Math.PI*2); ctx.fill();
         ctx.shadowBlur = 0;
@@ -534,7 +609,7 @@ class Shade extends Enemy {
 // デーモン（巨大・高耐久・確定ドロップ・3way射撃）
 class Demon extends Enemy {
     constructor(x, y) {
-        super(x, y, 48, 56, 350, 0.8, '#880000', 1.0);
+        super(x, y, 48, 56, 350, 0.5, '#880000', 1.0);
         this.vx = (Math.random()<0.5?1:-1)*this.spd;
         this.scoreVal = 600;
         this.shootCd = 80 + Math.random()*40|0;
@@ -859,7 +934,7 @@ function updatePlayer() {
         // 踏みつけ判定
         if (player.vy>1 && player.y+player.h < e.y+e.h*0.5+8) {
             e.takeDamage(e.maxHp); // 即死
-            player.vy = JUMP_FORCE*0.65;
+            player.vy = BASE_JUMP_FORCE*0.65;
             score += 50;
             shakeAmt = 7;
         } else if (player.invincible<=0) {
