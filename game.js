@@ -192,7 +192,7 @@ const COLS        = Math.ceil(canvas.width  / TILE);
 const ROWS        = Math.ceil(canvas.height / TILE);
 
 // ---- ゲーム状態 ----
-const S = { TITLE:'title', PLAY:'play', OVER:'over', CLEAR:'clear', READY:'ready', REWARD:'reward' };
+const S = { TITLE:'title', PLAY:'play', OVER:'over', CLEAR:'clear', READY:'ready', REWARD:'reward', DEBUG_MENU:'debug_menu' };
 let state    = S.TITLE;
 let score    = 0;
 let wave     = 1;           // ウェーブ（敵を全滅で次へ）
@@ -212,6 +212,7 @@ let savedUpgrades = null; // 面開始時の能力バックアップ
 let savedWeapon = 'PISTOL';
 let savedHp = 100;
 let savedMaxHp = 100;
+let savedEpic = {};
 
 // ---- 報酬選択（ローグライク） ----
 let rewardChoices = [];   // 3つのアイテムキー
@@ -229,11 +230,12 @@ canvas.addEventListener('mousedown', e => {
         mouse.down = true; initAudio();
         // 報酬画面でのクリック選択
         if (state === S.REWARD) {
-            const cardW = 180, cardH = 220, gap = 30;
-            const totalW = cardW * 3 + gap * 2;
+            const numC = rewardChoices.length;
+            const cardW = 170, cardH = 310, gap = 24;
+            const totalW = cardW * numC + gap * (numC - 1);
             const startX = (canvas.width - totalW) / 2;
-            const cardY = 180;
-            for (let i = 0; i < 3; i++) {
+            const cardY = 110;
+            for (let i = 0; i < numC; i++) {
                 const cx = startX + i * (cardW + gap);
                 if (mouse.x >= cx && mouse.x <= cx+cardW && mouse.y >= cardY && mouse.y <= cardY+cardH) {
                     rewardSelected = i;
@@ -241,6 +243,10 @@ canvas.addEventListener('mousedown', e => {
                     break;
                 }
             }
+        }
+        // デバッグメニューでのクリック選択
+        if (state === S.DEBUG_MENU) {
+            handleDebugMenuClick();
         }
     }
 });
@@ -258,9 +264,19 @@ window.addEventListener('keydown', e => {
     if (state === S.READY && e.code === 'Space') { readyTimer = 1; } // スキップ
     // 報酬選択
     if (state === S.REWARD) {
-        if (e.code === 'ArrowLeft'  || e.code === 'KeyA') rewardSelected = (rewardSelected + 2) % 3;
-        if (e.code === 'ArrowRight' || e.code === 'KeyD') rewardSelected = (rewardSelected + 1) % 3;
+        const n = rewardChoices.length || 3;
+        if (e.code === 'ArrowLeft'  || e.code === 'KeyA') rewardSelected = (rewardSelected + n - 1) % n;
+        if (e.code === 'ArrowRight' || e.code === 'KeyD') rewardSelected = (rewardSelected + 1) % n;
         if (e.code === 'Space' || e.code === 'Enter') applyReward();
+    }
+    // デバッグメニュー
+    if (state === S.DEBUG_MENU) {
+        handleDebugMenuKey(e);
+    }
+    // デバッグメニュー開閉 (F1)
+    if (e.code === 'F1' && state === S.PLAY) {
+        e.preventDefault();
+        openDebugMenu();
     }
 });
 window.addEventListener('keyup', e => keys[e.code] = false);
@@ -275,7 +291,29 @@ const WEAPONS = {
     SNIPER:  { name:'スナイパー', dmg:200, cd:75, spd:22, spread:0.00, color:'#ff00ff', glow:'#220033', pellets:1, piercing:true,  bouncing:false, explosive:false, melee:false },
     PLASMA:  { name:'プラズマ',   dmg:70,  cd:45, spd:9,  spread:0.09, color:'#aa00ff', glow:'#110022', pellets:1, piercing:false, bouncing:true,  explosive:true,  explodeR:65, melee:false },
     SWORD:   { name:'魔剣',       dmg:120, cd:20, spd:0,  spread:0,    color:'#ff4444', glow:'#330000', pellets:1, piercing:true,  bouncing:false, explosive:false, melee:true, range:60 },
+    LASER:   { name:'レーザー',   dmg:8,   cd:2,  spd:30, spread:0.00, color:'#ff0044', glow:'#440011', pellets:1, piercing:true,  bouncing:false, explosive:false, melee:false, laser:true },
 };
+
+// ============================================================
+//  レアリティシステム
+// ============================================================
+const RARITY_DEFS = {
+    1: { label:'コモン',     color:'#bbbbbb', glow:'#555555', mult: 0.6 },
+    2: { label:'アンコモン', color:'#44ff66', glow:'#116622', mult: 1.0 },
+    3: { label:'レア',       color:'#4488ff', glow:'#112266', mult: 1.6 },
+    4: { label:'エピック',   color:'#cc44ff', glow:'#440088', mult: 2.5 },
+};
+const RARITY_WEIGHTS = [
+    { rarity:1, weight:50 },
+    { rarity:2, weight:35 },
+    { rarity:3, weight:10 },
+    { rarity:4, weight:5 },
+];
+function rollRarity() {
+    let r = Math.random() * 100, acc = 0;
+    for (const rw of RARITY_WEIGHTS) { acc += rw.weight; if (r < acc) return rw.rarity; }
+    return 1;
+}
 
 // ============================================================
 //  プレイヤー
@@ -289,6 +327,10 @@ const player = {
     weapon:'PISTOL',
     fireCd:0,
     upgrades:{ multiShot:1, fireRate:1.0, bulletSize:1.0, moveSpeed:1.0, jumpPower:1.0 },
+    extraJumps:0, maxExtraJumps:0, // エピック:空中ジャンプ
+    hasMagnet:false, // エピック:アイテム磁石
+    hasShield:false, shieldHp:0, // エピック:シールド
+    hasLifeSteal:false, // エピック:吸血
     animTimer:0,
     stomping:false,
 };
@@ -309,7 +351,8 @@ class Bullet {
         this.bouncing  = W.bouncing;
         this.explosive = W.explosive;
         this.explodeR  = W.explodeR || 0;
-        this.size      = (wKey === 'SNIPER' ? 4 : wKey === 'PLASMA' ? 7 : 3.5) * sizeScale;
+        this.laser     = W.laser || false;
+        this.size      = (wKey === 'SNIPER' ? 4 : wKey === 'PLASMA' ? 7 : wKey === 'LASER' ? 2 : 3.5) * sizeScale;
         this.bounceLeft= this.bouncing ? 4 : 0;
         this.trail     = [];
         this.age       = 0;
@@ -373,8 +416,17 @@ class Bullet {
             px(this.trail[i].x - camX - 1, this.trail[i].y - 1, 1, 1, this.color);
         }
         ctx.globalAlpha = 1;
-        // 本体（四角ドット）
-        pxRect(sx - s, this.y - s, s*2, s*2, this.color);
+        // 本体
+        if (this.laser) {
+            // レーザー: 長い線として描画
+            for (let i = 0; i < this.trail.length; i++) {
+                pxRect(this.trail[i].x - camX - 1, this.trail[i].y - 1, 2, 2, this.color);
+            }
+            pxRect(sx - 1, this.y - 1, 3, 3, '#fff');
+            pxRect(sx - s, this.y - s, s*2, s*2, this.color);
+        } else {
+            pxRect(sx - s, this.y - s, s*2, s*2, this.color);
+        }
         // 中心ハイライト
         pxRect(sx - 1, this.y - 1, 2, 2, '#fff');
     }
@@ -478,23 +530,31 @@ function spawnParticles(x, y, color, count, size=3) {
 //  アイテムクラス
 // ============================================================
 const ITEM_DEFS = {
-    MULTISHOT:      { label:'+弾数',       color:'#00e5ff', icon:'◉' },
-    FIRERATE:       { label:'+速射',       color:'#ffdd00', icon:'⚡' },
-    BULLETSIZE:     { label:'+弾肥大化',   color:'#ff44cc', icon:'◎' },
-    SPEED_UP:       { label:'+移動速度',   color:'#44ffaa', icon:'»' },
-    JUMP_UP:        { label:'+跳躍力',     color:'#88ffff', icon:'↑' },
-    HEAL:           { label:'HP回復',      color:'#22ff44', icon:'+' },
-    MAXHP_UP:       { label:'+最大HP',     color:'#ff8844', icon:'♥' },
-    WEAPON_SHOTGUN: { label:'ショットガン', color:'#ff6a00', icon:'shotgun' },
-    WEAPON_SMG:     { label:'SMG',         color:'#00ff88', icon:'smg' },
-    WEAPON_SNIPER:  { label:'スナイパー',   color:'#ff00ff', icon:'sniper' },
-    WEAPON_PLASMA:  { label:'プラズマ',    color:'#aa00ff', icon:'plasma' },
-    WEAPON_SWORD:   { label:'魔剣',        color:'#ff4444', icon:'sword' },
+    // 通常アイテム (コモン～レアで出現)
+    MULTISHOT:      { label:'+弾数',       color:'#00e5ff', icon:'◉',      maxRarity:3 },
+    FIRERATE:       { label:'+速射',       color:'#ffdd00', icon:'⚡',     maxRarity:3 },
+    BULLETSIZE:     { label:'+弾肥大化',   color:'#ff44cc', icon:'◎',      maxRarity:3 },
+    SPEED_UP:       { label:'+移動速度',   color:'#44ffaa', icon:'»',      maxRarity:3 },
+    JUMP_UP:        { label:'+跳躍力',     color:'#88ffff', icon:'↑',      maxRarity:3 },
+    HEAL:           { label:'HP回復',      color:'#22ff44', icon:'+',      maxRarity:3 },
+    MAXHP_UP:       { label:'+最大HP',     color:'#ff8844', icon:'♥',      maxRarity:3 },
+    WEAPON_SHOTGUN: { label:'ショットガン', color:'#ff6a00', icon:'shotgun', maxRarity:3 },
+    WEAPON_SMG:     { label:'SMG',         color:'#00ff88', icon:'smg',     maxRarity:3 },
+    WEAPON_SNIPER:  { label:'スナイパー',   color:'#ff00ff', icon:'sniper', maxRarity:3 },
+    WEAPON_PLASMA:  { label:'プラズマ',    color:'#aa00ff', icon:'plasma',  maxRarity:3 },
+    WEAPON_SWORD:   { label:'魔剣',        color:'#ff4444', icon:'sword',   maxRarity:3 },
+    // エピック専用
+    EXTRA_JUMP:     { label:'空中ジャンプ', color:'#cc44ff', icon:'⇈',     minRarity:4, maxRarity:4 },
+    WEAPON_LASER:   { label:'レーザー',    color:'#ff0044', icon:'laser',   minRarity:4, maxRarity:4 },
+    MAGNET:         { label:'磁力フィールド', color:'#ffcc00', icon:'⊕',   minRarity:4, maxRarity:4 },
+    SHIELD:         { label:'バリア',      color:'#00ccff', icon:'◇',      minRarity:4, maxRarity:4 },
+    LIFE_STEAL:     { label:'吸血',        color:'#cc0044', icon:'♦',      minRarity:4, maxRarity:4 },
 };
 class Item {
-    constructor(x, y, type) {
+    constructor(x, y, type, rarity) {
         this.x = x; this.y = y;
         this.type = type;
+        this.rarity = rarity || 2;
         this.collected = false;
         this.t = Math.random()*Math.PI*2;
         this.w = 30; this.h = 30;
@@ -505,31 +565,65 @@ class Item {
         const sx = this.x - camX;
         if (sx < -40 || sx > canvas.width+40) return;
         const d = ITEM_DEFS[this.type];
+        if (!d) return;
+        const rd = RARITY_DEFS[this.rarity];
         const hover = Math.round(Math.sin(this.t)*4);
         const bx = Math.round(sx-12), by = Math.round(this.y-12+hover);
-        // 箱（黒背景+色枠）
+        // 箱（黒背景+レアリティ色枠）
         pxRect(bx, by, 24, 24, '#000');
-        pxRect(bx, by, 24, 2, d.color);
-        pxRect(bx, by+22, 24, 2, d.color);
-        pxRect(bx, by, 2, 24, d.color);
-        pxRect(bx+22, by, 2, 24, d.color);
+        pxRect(bx, by, 24, 2, rd.color);
+        pxRect(bx, by+22, 24, 2, rd.color);
+        pxRect(bx, by, 2, 24, rd.color);
+        pxRect(bx+22, by, 2, 24, rd.color);
         // アイコン描画
         drawItemIcon(d.icon, sx, this.y+hover, d.color);
+        // レアリティ名表示
+        if (this.rarity >= 3) {
+            ctx.fillStyle = rd.color; ctx.font = 'bold 8px monospace'; ctx.textAlign = 'center';
+            ctx.fillText(rd.label, sx, this.y - 16 + hover);
+            ctx.textAlign = 'left';
+        }
     }
     applyTo() {
-        const t = this.type;
-        if      (t === 'MULTISHOT')  player.upgrades.multiShot   = Math.min(player.upgrades.multiShot + 1, 9);
-        else if (t === 'FIRERATE')   player.upgrades.fireRate     = Math.min(player.upgrades.fireRate  * 1.15, 4);
-        else if (t === 'BULLETSIZE') player.upgrades.bulletSize   = Math.min(player.upgrades.bulletSize* 1.2, 3);
-        else if (t === 'SPEED_UP')   player.upgrades.moveSpeed    = Math.min(player.upgrades.moveSpeed * 1.12, 2);
-        else if (t === 'JUMP_UP')    player.upgrades.jumpPower    = Math.min(player.upgrades.jumpPower * 1.1, 1.8);
-        else if (t === 'HEAL')       player.hp = Math.min(player.hp + 15, player.maxHp);
-        else if (t === 'MAXHP_UP')  { player.maxHp += 10; player.hp = Math.min(player.hp + 10, player.maxHp); }
-        else if (t.startsWith('WEAPON_')) player.weapon = t.replace('WEAPON_','');
+        applyItemEffect(this.type, this.rarity);
         this.collected = true;
-        spawnParticles(this.x, this.y, ITEM_DEFS[t].color, 14, 4);
-        showPickupText(ITEM_DEFS[t].label, ITEM_DEFS[t].color);
+        const d = ITEM_DEFS[this.type];
+        const rd = RARITY_DEFS[this.rarity];
+        spawnParticles(this.x, this.y, d.color, 14, 4);
+        showPickupText(`${rd.label} ${d.label}`, rd.color);
     }
+}
+
+// アイテム効果適用（共通関数）
+function applyItemEffect(type, rarity) {
+    const m = RARITY_DEFS[rarity].mult;
+    if      (type === 'MULTISHOT')  player.upgrades.multiShot   = Math.min(player.upgrades.multiShot + Math.max(1, Math.round(1 * m)), 12);
+    else if (type === 'FIRERATE')   player.upgrades.fireRate     = Math.min(player.upgrades.fireRate  * (1 + 0.15 * m), 6);
+    else if (type === 'BULLETSIZE') player.upgrades.bulletSize   = Math.min(player.upgrades.bulletSize* (1 + 0.2 * m), 5);
+    else if (type === 'SPEED_UP')   player.upgrades.moveSpeed    = Math.min(player.upgrades.moveSpeed * (1 + 0.12 * m), 3);
+    else if (type === 'JUMP_UP')    player.upgrades.jumpPower    = Math.min(player.upgrades.jumpPower * (1 + 0.1 * m), 2.5);
+    else if (type === 'HEAL')       player.hp = Math.min(player.hp + Math.round(15 * m), player.maxHp);
+    else if (type === 'MAXHP_UP')  { const v = Math.round(10 * m); player.maxHp += v; player.hp = Math.min(player.hp + v, player.maxHp); }
+    else if (type === 'EXTRA_JUMP') { player.maxExtraJumps += 1; player.extraJumps = player.maxExtraJumps; }
+    else if (type === 'MAGNET')     player.hasMagnet = true;
+    else if (type === 'SHIELD')    { player.hasShield = true; player.shieldHp = Math.min(player.shieldHp + 50, 100); }
+    else if (type === 'LIFE_STEAL') player.hasLifeSteal = true;
+    else if (type === 'WEAPON_LASER') player.weapon = 'LASER';
+    else if (type.startsWith('WEAPON_')) player.weapon = type.replace('WEAPON_','');
+    sfxItemPickup();
+}
+
+// レアリティに適合するアイテムをランダムに選出
+function rollItemWithRarity() {
+    const rarity = rollRarity();
+    const keys = Object.keys(ITEM_DEFS).filter(k => {
+        const d = ITEM_DEFS[k];
+        const minR = d.minRarity || 1;
+        const maxR = d.maxRarity || 4;
+        return rarity >= minR && rarity <= maxR;
+    });
+    const key = keys[Math.floor(Math.random() * keys.length)];
+    return { type: key, rarity };
 }
 
 // 武器ピクセルアイコン描画
@@ -561,6 +655,12 @@ function drawItemIcon(icon, cx, cy, color) {
         pxRect(x-1, y-11, 3, 2, '#fff');  // 先端
         pxRect(x-4, y+3, 9, 2, color);    // 鍔
         pxRect(x, y+5, 2, 5, '#864');     // 柄
+    } else if (icon === 'laser') {
+        // レーザー: SF風レーザー砲
+        pxRect(x-10, y-1, 20, 3, color);
+        pxRect(x-12, y-3, 6, 7, '#622');
+        pxRect(x+6, y-2, 6, 5, color);
+        px(x+10, y-1, 3, 3, '#fff');
     } else {
         // その他のアイテム: テキストアイコン
         ctx.fillStyle = color;
@@ -591,7 +691,7 @@ class Enemy {
         this.alive=true; this.onGround=false;
         this.t=Math.random()*100;
         this.sleeping=false; // trueの間は動かない
-        this.activateRange=700; // プレイヤーがこの距離以内で覚醒（画面に入る前に起動）
+        this.activateRange=800; // プレイヤーがこの距離以内で覚醒（画面に入る前に起動）
     }
     _checkWake() {
         if (!this.sleeping) return true;
@@ -619,13 +719,8 @@ class Enemy {
         if (Math.random() < this.dropRate) this._dropItem();
     }
     _dropItem() {
-        const pool =   ['MULTISHOT','FIRERATE','BULLETSIZE','SPEED_UP','JUMP_UP','HEAL','MAXHP_UP','WEAPON_SHOTGUN','WEAPON_SMG','WEAPON_SNIPER','WEAPON_PLASMA','WEAPON_SWORD'];
-        const weights= [18,         16,        14,          10,        8,        15,    8,         3,               3,            2,              3,             3];
-        let r = Math.random()*100, acc=0;
-        for (let i=0;i<pool.length;i++) {
-            acc+=weights[i];
-            if (r<acc) { items.push(new Item(this.x+this.w/2, this.y, pool[i])); break; }
-        }
+        const rolled = rollItemWithRarity();
+        items.push(new Item(this.x+this.w/2, this.y, rolled.type, rolled.rarity));
     }
     _applyGravity() {
         this.vy += GRAVITY;
@@ -1464,6 +1559,7 @@ function loadLevel(idx) {
     savedWeapon = player.weapon;
     savedHp = player.hp;
     savedMaxHp = player.maxHp;
+    savedEpic = { maxExtraJumps:player.maxExtraJumps, hasMagnet:player.hasMagnet, hasShield:player.hasShield, shieldHp:player.shieldHp, hasLifeSteal:player.hasLifeSteal };
 
     // 準備期間
     readyTimer = 120; // 2秒
@@ -1486,13 +1582,23 @@ function updatePlayer() {
     const moveSpd = BASE_MOVE_SPEED * player.upgrades.moveSpeed;
     if (keys['KeyA']||keys['ArrowLeft'])  player.vx -= moveSpd;
     if (keys['KeyD']||keys['ArrowRight']) player.vx += moveSpd;
-    // ジャンプ（ふわっと）
+    // ジャンプ（ふわっと） + 空中ジャンプ
     const jumpF = BASE_JUMP_FORCE * player.upgrades.jumpPower;
-    if ((keys['KeyW']||keys['ArrowUp']||keys['Space']) && player.onGround) {
-        player.vy = jumpF;
-        spawnParticles(player.x+player.w/2, player.y+player.h, '#444', 6, 2);
-        sfxJump();
+    const jumpPressed = keys['KeyW']||keys['ArrowUp']||keys['Space'];
+    if (jumpPressed && !player._jumpHeld) {
+        if (player.onGround) {
+            player.vy = jumpF;
+            player.extraJumps = player.maxExtraJumps;
+            spawnParticles(player.x+player.w/2, player.y+player.h, '#444', 6, 2);
+            sfxJump();
+        } else if (player.extraJumps > 0) {
+            player.vy = jumpF * 0.85;
+            player.extraJumps--;
+            spawnParticles(player.x+player.w/2, player.y+player.h, '#c4f', 8, 3);
+            sfxJump();
+        }
     }
+    player._jumpHeld = jumpPressed;
     player.vy += GRAVITY;
     player.vx *= FRICTION;
     const maxHSpd = 5 * player.upgrades.moveSpeed;
@@ -1567,12 +1673,20 @@ function updatePlayer() {
         }
     }
 
-    // アイテム取得
+    // アイテム取得 + 磁石効果
     for (const it of items) {
         if (it.collected) continue;
+        if (player.hasMagnet) {
+            const dx = (player.x+player.w/2) - it.x;
+            const dy = (player.y+player.h/2) - it.y;
+            const dist = Math.sqrt(dx*dx+dy*dy);
+            if (dist < 200) {
+                it.x += dx/dist * 3;
+                it.y += dy/dist * 3;
+            }
+        }
         if (rectsOverlap({x:player.x,y:player.y,w:player.w,h:player.h},{x:it.x-15,y:it.y-15,w:30,h:30})) {
             it.applyTo();
-            sfxItemPickup();
         }
     }
 
@@ -1595,6 +1709,14 @@ function updatePlayer() {
 }
 
 function playerHit(dmg) {
+    // シールドでダメージ吸収
+    if (player.hasShield && player.shieldHp > 0) {
+        const absorbed = Math.min(dmg, player.shieldHp);
+        player.shieldHp -= absorbed;
+        dmg -= absorbed;
+        spawnParticles(player.x+player.w/2, player.y+player.h/2, '#00ccff', 8, 3);
+        if (dmg <= 0) { player.invincible = 30; return; }
+    }
     player.hp -= dmg;
     player.invincible = 80;
     shakeAmt = 12;
@@ -1611,6 +1733,7 @@ function playerHit(dmg) {
             player.upgrades = JSON.parse(JSON.stringify(savedUpgrades));
             player.weapon = savedWeapon;
             player.maxHp = savedMaxHp;
+            if (savedEpic) { player.maxExtraJumps=savedEpic.maxExtraJumps||0; player.extraJumps=player.maxExtraJumps; player.hasMagnet=savedEpic.hasMagnet||false; player.hasShield=savedEpic.hasShield||false; player.shieldHp=savedEpic.shieldHp||0; player.hasLifeSteal=savedEpic.hasLifeSteal||false; }
             player.hp = player.maxHp; // HP全回復
             loadLevel(currentLevelIdx);
         }
@@ -1699,6 +1822,10 @@ function updateBullets() {
             if (!e.alive||!b.alive) continue;
             if (rectsOverlap({x:b.x-b.size,y:b.y-b.size,w:b.size*2,h:b.size*2}, e.rect())) {
                 e.takeDamage(b.dmg);
+                // 吸血効果
+                if (player.hasLifeSteal) {
+                    player.hp = Math.min(player.hp + Math.ceil(b.dmg * 0.1), player.maxHp);
+                }
                 if (!b.piercing) b.kill();
             }
         }
@@ -1875,6 +2002,12 @@ function drawPlayer() {
             ctx.globalAlpha = 1;
         }
     }
+    // シールド描画
+    if (player.hasShield && player.shieldHp > 0) {
+        ctx.globalAlpha = 0.25 + 0.1 * Math.sin(Date.now()*0.005);
+        pxRect(sx-4, sy-4, player.w+8, player.h+8, '#00ccff');
+        ctx.globalAlpha = 1;
+    }
 }
 
 function drawHUD() {
@@ -1906,7 +2039,14 @@ function drawHUD() {
     ctx.fillStyle='#aaa'; ctx.font='11px monospace';
     ctx.fillText(`弾×${player.upgrades.multiShot} 速射×${player.upgrades.fireRate.toFixed(1)} 弾径×${player.upgrades.bulletSize.toFixed(1)}`, 14, 88);
     ctx.fillStyle='#88a'; ctx.font='10px monospace';
-    ctx.fillText(`脚力×${player.upgrades.moveSpeed.toFixed(1)} 跳躍×${player.upgrades.jumpPower.toFixed(1)}`, 14, 102);
+    let statusLine = `脚力×${player.upgrades.moveSpeed.toFixed(1)} 跳躍×${player.upgrades.jumpPower.toFixed(1)}`;
+    if (player.maxExtraJumps > 0) statusLine += ` 空中J×${player.maxExtraJumps}`;
+    ctx.fillText(statusLine, 14, 102);
+    // エピック能力アイコン
+    let epicY = 116;
+    if (player.hasShield) { ctx.fillStyle='#0cf'; ctx.font='10px monospace'; ctx.fillText(`◇バリア HP:${player.shieldHp}`, 14, epicY); epicY+=12; }
+    if (player.hasMagnet) { ctx.fillStyle='#fc0'; ctx.font='10px monospace'; ctx.fillText('⊕磁石', 14, epicY); epicY+=12; }
+    if (player.hasLifeSteal) { ctx.fillStyle='#c04'; ctx.font='10px monospace'; ctx.fillText('♦吸血', 14, epicY); epicY+=12; }
 
     // レベル
     const stg = getStageIdx() + 1;
@@ -2069,67 +2209,72 @@ function drawGameOver() {
 function enterRewardScreen() {
     state = S.REWARD;
     rewardSelected = 0;
-    // ランダムに3つの異なるアイテムを選出
-    const allKeys = Object.keys(ITEM_DEFS);
+    // レアリティ付きで3つの異なるアイテムを選出
     rewardChoices = [];
-    const pool = allKeys.slice();
-    for (let i = 0; i < 3 && pool.length > 0; i++) {
-        const idx = Math.floor(Math.random() * pool.length);
-        rewardChoices.push(pool[idx]);
-        pool.splice(idx, 1);
+    const usedTypes = new Set();
+    for (let i = 0; i < 3; i++) {
+        let rolled;
+        let tries = 0;
+        do {
+            rolled = rollItemWithRarity();
+            tries++;
+        } while (usedTypes.has(rolled.type) && tries < 30);
+        usedTypes.add(rolled.type);
+        rewardChoices.push(rolled);
     }
 }
 
 function applyReward() {
     const choice = rewardChoices[rewardSelected];
     if (!choice) return;
-    // アイテム効果を適用
-    const t = choice;
-    if      (t === 'MULTISHOT')  player.upgrades.multiShot   = Math.min(player.upgrades.multiShot + 1, 9);
-    else if (t === 'FIRERATE')   player.upgrades.fireRate     = Math.min(player.upgrades.fireRate  * 1.15, 4);
-    else if (t === 'BULLETSIZE') player.upgrades.bulletSize   = Math.min(player.upgrades.bulletSize* 1.2, 3);
-    else if (t === 'SPEED_UP')   player.upgrades.moveSpeed    = Math.min(player.upgrades.moveSpeed * 1.12, 2);
-    else if (t === 'JUMP_UP')    player.upgrades.jumpPower    = Math.min(player.upgrades.jumpPower * 1.1, 1.8);
-    else if (t === 'HEAL')       player.hp = Math.min(player.hp + 25, player.maxHp);
-    else if (t === 'MAXHP_UP')  { player.maxHp += 15; player.hp = Math.min(player.hp + 15, player.maxHp); }
-    else if (t.startsWith('WEAPON_')) player.weapon = t.replace('WEAPON_','');
-    sfxItemPickup();
-    showPickupText(ITEM_DEFS[t].label, ITEM_DEFS[t].color);
+    const t = choice.type || choice;
+    const r = choice.rarity || 2;
+    applyItemEffect(t, r);
+    const def = ITEM_DEFS[t];
+    const rd = RARITY_DEFS[r];
+    showPickupText(`${rd.label} ${def.label}`, rd.color);
     loadLevel(currentLevelIdx);
 }
 
 function drawReward() {
     // 半透明オーバーレイ
-    ctx.fillStyle='rgba(0,0,0,0.75)';
+    ctx.fillStyle='rgba(0,0,0,0.82)';
     ctx.fillRect(0,0,canvas.width,canvas.height);
 
     ctx.textAlign='center';
 
     // タイトル
-    ctx.fillStyle='#fc0'; ctx.font='bold 28px monospace';
-    ctx.fillText('LEVEL CLEAR!', canvas.width/2, 100);
-    pxRect(canvas.width/2-140, 110, 280, 3, '#a80');
+    ctx.fillStyle='#fc0'; ctx.font='bold 26px monospace';
+    ctx.fillText('LEVEL CLEAR!', canvas.width/2, 60);
+    pxRect(canvas.width/2-130, 68, 260, 3, '#a80');
 
-    ctx.fillStyle='#aaa'; ctx.font='16px monospace';
-    ctx.fillText('報酬を1つ選べ（←→で選択、SPACEで決定）', canvas.width/2, 150);
+    ctx.fillStyle='#aaa'; ctx.font='14px monospace';
+    ctx.fillText('報酬を1つ選べ（←→で選択、SPACEで決定）', canvas.width/2, 95);
 
     // 3つの選択肢を描画
-    const cardW = 180, cardH = 220, gap = 30;
-    const totalW = cardW * 3 + gap * 2;
+    const numChoices = rewardChoices.length;
+    const cardW = 170, cardH = 310, gap = 24;
+    const totalW = cardW * numChoices + gap * (numChoices - 1);
     const startX = (canvas.width - totalW) / 2;
-    const cardY = 180;
+    const cardY = 110;
 
-    for (let i = 0; i < 3; i++) {
-        const key = rewardChoices[i];
-        if (!key) continue;
+    for (let i = 0; i < numChoices; i++) {
+        const rc = rewardChoices[i];
+        if (!rc) continue;
+        const key = rc.type || rc;
+        const rarity = rc.rarity || 1;
         const def = ITEM_DEFS[key];
+        if (!def) continue;
         const cx = startX + i * (cardW + gap);
         const selected = (i === rewardSelected);
 
+        const rarityDef = RARITY_DEFS[rarity];
+        const borderColor = selected ? rarityDef.color : '#444';
+        const bgColor = selected ? '#1a1a1e' : '#0e0e12';
+
         // カード背景
-        pxRect(cx, cardY, cardW, cardH, selected ? '#222' : '#111');
+        pxRect(cx, cardY, cardW, cardH, bgColor);
         // カード枠
-        const borderColor = selected ? '#fc0' : '#444';
         pxRect(cx, cardY, cardW, 3, borderColor);
         pxRect(cx, cardY+cardH-3, cardW, 3, borderColor);
         pxRect(cx, cardY, 3, cardH, borderColor);
@@ -2137,56 +2282,63 @@ function drawReward() {
 
         // 選択カーソル
         if (selected) {
-            pxRect(cx+3, cardY+3, cardW-6, cardH-6, 'rgba(255,204,0,0.08)');
-            // 角のドット装飾
-            px(cx+6, cardY+6, 2, 2, '#fc0');
-            px(cx+cardW-10, cardY+6, 2, 2, '#fc0');
-            px(cx+6, cardY+cardH-10, 2, 2, '#fc0');
-            px(cx+cardW-10, cardY+cardH-10, 2, 2, '#fc0');
+            pxRect(cx+3, cardY+3, cardW-6, cardH-6, 'rgba(255,255,255,0.04)');
+            px(cx+6, cardY+6, 2, 2, rarityDef.color);
+            px(cx+cardW-10, cardY+6, 2, 2, rarityDef.color);
+            px(cx+6, cardY+cardH-10, 2, 2, rarityDef.color);
+            px(cx+cardW-10, cardY+cardH-10, 2, 2, rarityDef.color);
         }
 
-        // アイコン（大きめに中央配置）
+        // レアリティラベル
+        ctx.fillStyle = rarityDef.color; ctx.font = 'bold 11px monospace';
+        ctx.fillText(rarityDef.label, cx + cardW/2, cardY + 22);
+
+        // アイコン
         const iconX = cx + cardW/2;
-        const iconY = cardY + 70;
-        // アイコン背景円
+        const iconY = cardY + 60;
         pxRect(iconX-20, iconY-20, 40, 40, '#000');
         pxRect(iconX-18, iconY-18, 36, 36, selected ? '#1a1a2e' : '#0a0a1e');
         drawItemIcon(def.icon, iconX, iconY, def.color);
 
         // アイテム名
-        ctx.fillStyle = def.color; ctx.font = 'bold 16px monospace';
-        ctx.fillText(def.label, cx + cardW/2, cardY + 120);
+        ctx.fillStyle = def.color; ctx.font = 'bold 14px monospace';
+        ctx.fillText(def.label, cx + cardW/2, cardY + 100);
 
         // 説明テキスト
-        ctx.fillStyle = '#888'; ctx.font = '11px monospace';
-        const desc = getItemDescription(key);
-        // 説明を複数行に分割
+        ctx.fillStyle = '#999'; ctx.font = '11px monospace';
+        const desc = getItemDescription(key, rarity);
         const lines = desc.split('\n');
         for (let l = 0; l < lines.length; l++) {
-            ctx.fillText(lines[l], cx + cardW/2, cardY + 150 + l * 16);
+            ctx.fillText(lines[l], cx + cardW/2, cardY + 122 + l * 15);
         }
     }
 
     // 下部の操作説明
     ctx.fillStyle='#555'; ctx.font='12px monospace';
-    ctx.fillText('A/← →/D : 選択  SPACE/Enter : 決定', canvas.width/2, cardY + cardH + 40);
+    ctx.fillText('A/← →/D : 選択  SPACE/Enter : 決定', canvas.width/2, canvas.height - 20);
     ctx.textAlign='left';
 }
 
-function getItemDescription(key) {
+function getItemDescription(key, rarity) {
+    const m = RARITY_DEFS[rarity || 2].mult;
     switch(key) {
-        case 'MULTISHOT':      return '弾の発射数+1';
-        case 'FIRERATE':       return '攻撃速度×1.15';
-        case 'BULLETSIZE':     return '弾のサイズ×1.2';
-        case 'SPEED_UP':       return '移動速度×1.12';
-        case 'JUMP_UP':        return 'ジャンプ力×1.1';
-        case 'HEAL':           return 'HP 25回復';
-        case 'MAXHP_UP':       return '最大HP +15\nHP 15回復';
+        case 'MULTISHOT':      return `弾の発射数+${Math.max(1,Math.round(1*m))}`;
+        case 'FIRERATE':       return `攻撃速度×${(1+0.15*m).toFixed(2)}`;
+        case 'BULLETSIZE':     return `弾のサイズ×${(1+0.2*m).toFixed(2)}`;
+        case 'SPEED_UP':       return `移動速度×${(1+0.12*m).toFixed(2)}`;
+        case 'JUMP_UP':        return `ジャンプ力×${(1+0.1*m).toFixed(2)}`;
+        case 'HEAL':           return `HP ${Math.round(15*m)}回復`;
+        case 'MAXHP_UP':       { const v=Math.round(10*m); return `最大HP +${v}\nHP ${v}回復`; }
         case 'WEAPON_SHOTGUN': return '近距離散弾\n高火力×6発';
         case 'WEAPON_SMG':     return '高速連射\n弾幕で制圧';
         case 'WEAPON_SNIPER':  return '貫通高威力\n一撃必殺';
         case 'WEAPON_PLASMA':  return '反射＆爆発\n範囲ダメージ';
         case 'WEAPON_SWORD':   return '近接斬撃\n広範囲・貫通';
+        case 'EXTRA_JUMP':     return '空中ジャンプ+1\n多段ジャンプ可能';
+        case 'WEAPON_LASER':   return '貫通レーザー\n超高速連射';
+        case 'MAGNET':         return 'アイテム自動吸引\n拾い漏れなし';
+        case 'SHIELD':         return 'バリア展開\nHP50のシールド';
+        case 'LIFE_STEAL':     return '攻撃でHP吸収\nダメージの10%回復';
         default:               return '';
     }
 }
@@ -2214,6 +2366,132 @@ function drawClear() {
 }
 
 // ============================================================
+//  デバッグメニュー
+// ============================================================
+let debugMenuCursor = 0;
+let debugMenuScroll = 0;
+let debugMenuItems = [];
+let debugPrevState = null;
+
+function buildDebugItemList() {
+    debugMenuItems = [];
+    const allKeys = Object.keys(ITEM_DEFS);
+    for (const key of allKeys) {
+        for (let r = 1; r <= 4; r++) {
+            const def = ITEM_DEFS[key];
+            const minR = def.minRarity || 1;
+            const maxR = def.maxRarity || 4;
+            if (r >= minR && r <= maxR) {
+                debugMenuItems.push({ type: key, rarity: r });
+            }
+        }
+    }
+}
+
+function openDebugMenu() {
+    buildDebugItemList();
+    debugPrevState = state;
+    state = S.DEBUG_MENU;
+    debugMenuCursor = 0;
+    debugMenuScroll = 0;
+}
+
+function handleDebugMenuKey(e) {
+    const maxVisible = 14;
+    if (e.code === 'ArrowUp' || e.code === 'KeyW') {
+        debugMenuCursor = Math.max(0, debugMenuCursor - 1);
+        if (debugMenuCursor < debugMenuScroll) debugMenuScroll = debugMenuCursor;
+    }
+    if (e.code === 'ArrowDown' || e.code === 'KeyS') {
+        debugMenuCursor = Math.min(debugMenuItems.length - 1, debugMenuCursor + 1);
+        if (debugMenuCursor >= debugMenuScroll + maxVisible) debugMenuScroll = debugMenuCursor - maxVisible + 1;
+    }
+    if (e.code === 'Space' || e.code === 'Enter') {
+        const item = debugMenuItems[debugMenuCursor];
+        applyItemEffect(item.type, item.rarity);
+        const def = ITEM_DEFS[item.type];
+        const rd = RARITY_DEFS[item.rarity];
+        showPickupText(`${rd.label} ${def.label}`, rd.color);
+    }
+    if (e.code === 'Escape' || e.code === 'F1') {
+        state = debugPrevState || S.PLAY;
+    }
+}
+
+function handleDebugMenuClick() {
+    const listX = canvas.width/2 - 200, listY = 80;
+    const rowH = 28;
+    const maxVisible = 14;
+    const clickRow = Math.floor((mouse.y - listY) / rowH);
+    if (clickRow >= 0 && clickRow < maxVisible) {
+        const idx = debugMenuScroll + clickRow;
+        if (idx < debugMenuItems.length) {
+            debugMenuCursor = idx;
+            const item = debugMenuItems[idx];
+            applyItemEffect(item.type, item.rarity);
+            const def = ITEM_DEFS[item.type];
+            const rd = RARITY_DEFS[item.rarity];
+            showPickupText(`${rd.label} ${def.label}`, rd.color);
+        }
+    }
+}
+
+function drawDebugMenu() {
+    ctx.fillStyle = 'rgba(0,0,0,0.88)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ff0'; ctx.font = 'bold 20px monospace';
+    ctx.fillText('DEBUG: アイテム選択 (F1/ESCで閉じる)', canvas.width/2, 40);
+    ctx.fillStyle = '#666'; ctx.font = '11px monospace';
+    ctx.fillText('↑↓: 選択  SPACE/Enter: 取得  クリックでも取得可', canvas.width/2, 58);
+
+    const listX = canvas.width/2 - 200;
+    const listY = 80;
+    const rowH = 28;
+    const maxVisible = 14;
+
+    for (let i = 0; i < maxVisible; i++) {
+        const idx = debugMenuScroll + i;
+        if (idx >= debugMenuItems.length) break;
+        const item = debugMenuItems[idx];
+        const def = ITEM_DEFS[item.type];
+        const rd = RARITY_DEFS[item.rarity];
+        const y = listY + i * rowH;
+        const isSel = (idx === debugMenuCursor);
+
+        if (isSel) {
+            pxRect(listX - 4, y - 2, 408, rowH, '#222');
+            pxRect(listX - 4, y - 2, 3, rowH, rd.color);
+        }
+
+        // レアリティ色ドット
+        pxRect(listX, y + 4, 14, 14, rd.color);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = rd.color; ctx.font = 'bold 11px monospace';
+        ctx.fillText(rd.label, listX + 18, y + 15);
+
+        ctx.fillStyle = def.color; ctx.font = 'bold 12px monospace';
+        ctx.fillText(def.label, listX + 90, y + 15);
+
+        ctx.fillStyle = '#888'; ctx.font = '10px monospace';
+        const desc = getItemDescription(item.type, item.rarity).replace('\n', ' / ');
+        ctx.fillText(desc, listX + 200, y + 15);
+    }
+
+    // スクロールバー
+    if (debugMenuItems.length > maxVisible) {
+        const barH = maxVisible * rowH;
+        const thumbH = Math.max(20, barH * maxVisible / debugMenuItems.length);
+        const thumbY = listY + (barH - thumbH) * debugMenuScroll / (debugMenuItems.length - maxVisible);
+        pxRect(listX + 404, listY, 4, barH, '#222');
+        pxRect(listX + 404, thumbY, 4, thumbH, '#666');
+    }
+
+    ctx.textAlign = 'left';
+}
+
+// ============================================================
 //  ゲーム制御
 // ============================================================
 function startGame() {
@@ -2222,6 +2500,9 @@ function startGame() {
     player.hp=100; player.maxHp=100;
     player.weapon='PISTOL';
     player.upgrades={multiShot:1, fireRate:1.0, bulletSize:1.0, moveSpeed:1.0, jumpPower:1.0};
+    player.extraJumps=0; player.maxExtraJumps=0;
+    player.hasMagnet=false; player.hasShield=false; player.shieldHp=0;
+    player.hasLifeSteal=false; player._jumpHeld=false;
     pickupTexts=[]; enemyBullets=[];
     loadLevel(0); // loadLevel will set state=READY and startBGM
 }
@@ -2292,6 +2573,15 @@ function draw() {
     } else if (state===S.CLEAR) {
         drawBackground(); drawTiles();
         drawClear();
+    } else if (state===S.DEBUG_MENU) {
+        drawBackground();
+        drawTiles();
+        drawGoal();
+        for (const e of enemies) e.draw(cameraX);
+        for (const it of items) it.draw(cameraX);
+        drawPlayer();
+        drawHUD();
+        drawDebugMenu();
     }
     ctx.restore();
 }
