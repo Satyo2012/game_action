@@ -10,10 +10,10 @@ canvas.width  = 960;
 canvas.height = 540;
 
 // ---- 定数 ----
-const GRAVITY     = 0.30;    // ふわっとジャンプ
+const GRAVITY     = 0.20;    // ふわっとジャンプ（滞空1.5倍）
 const FRICTION    = 0.78;
 const BASE_MOVE_SPEED = 0.65;
-const BASE_JUMP_FORCE = -9.0; // ふわっとジャンプ
+const BASE_JUMP_FORCE = -7.4; // ふわっとジャンプ（滞空1.5倍）
 const TILE        = 40;
 const COLS        = Math.ceil(canvas.width  / TILE);
 const ROWS        = Math.ceil(canvas.height / TILE);
@@ -757,9 +757,11 @@ const LEVELS = [
             for (const [s,l] of [[10,3],[22,4],[36,3],[46,3]]) clearCols(m,s,l,ROWS-2,ROWS);
             // 浮遊床
             platf(m, [[7,ROWS-5,4],[14,ROWS-6,3],[23,ROWS-5,4],[29,ROWS-4,3],[38,ROWS-5,3],[43,ROWS-6,4],[52,ROWS-5,3]]);
-            // 階段
-            for (let i=0;i<5;i++) for(let j=0;j<=i;j++) set(m,55+i,ROWS-3-j,2);
-            setGoal(m, w-3, ROWS-3);
+            // 階段（ゴール手前まで）
+            for (let i=0;i<4;i++) for(let j=0;j<=i;j++) set(m,52+i,ROWS-3-j,2);
+            // ゴール台座（階段の先に平らな場所）
+            platf(m, [[56, ROWS-6, 3]]);
+            setGoal(m, 57, ROWS-7);
             return m;
         }
     },
@@ -786,38 +788,45 @@ const LEVELS = [
             // 縦の柱
             for (let j=0;j<5;j++) set(m,30,ROWS-3-j,2);
             for (let j=0;j<4;j++) set(m,52,ROWS-3-j,2);
-            setGoal(m, w-3, ROWS-3);
+            // ゴール台座（最後のプラットフォームの先）
+            platf(m, [[w-5, ROWS-4, 3]]);
+            setGoal(m, w-4, ROWS-5);
             return m;
         }
     },
     {
         name:'奈落の深淵',
         bg1:'#000005', bg2:'#080014',
-        width:90,
+        width:80,
         enemySpawns: [
-            {type:'zombie',col:6,row:ROWS-3},{type:'shade',col:10,row:ROWS-6},
-            {type:'demon',col:18,row:ROWS-3},{type:'zombie',col:24,row:ROWS-3},
-            {type:'shade',col:28,row:ROWS-7},{type:'spawner',col:35,row:ROWS-3},
-            {type:'demon',col:45,row:ROWS-3},{type:'shade',col:50,row:ROWS-6},
-            {type:'spawner',col:58,row:ROWS-3},{type:'zombie',col:65,row:ROWS-3},
-            {type:'demon',col:72,row:ROWS-3},{type:'shade',col:76,row:ROWS-8},
-            {type:'demon',col:82,row:ROWS-3},{type:'spawner',col:86,row:ROWS-3},
+            {type:'zombie',col:6,row:ROWS-3},{type:'shade',col:14,row:ROWS-6},
+            {type:'demon',col:20,row:ROWS-3},{type:'zombie',col:28,row:ROWS-3},
+            {type:'shade',col:34,row:ROWS-7},{type:'spawner',col:42,row:ROWS-3},
+            {type:'demon',col:50,row:ROWS-3},{type:'shade',col:56,row:ROWS-6},
+            {type:'zombie',col:62,row:ROWS-3},{type:'demon',col:68,row:ROWS-3},
+            {type:'shade',col:72,row:ROWS-8},
         ],
         generate(w) {
             const m = blank(w, ROWS);
-            fillRow(m, ROWS-1, 0, 8,  1); fillRow(m, ROWS-2, 0, 8, 1);
-            fillRow(m, ROWS-1, w-8, w, 1); fillRow(m, ROWS-2, w-8, w, 1);
-            // 空中プラットフォーム群
-            let px=10;
-            const rng = (a,b)=>a+Math.floor((b-a+1)*( (px*137+wave*31)%(b-a+1) )/(b-a+1) );
-            for (let i=0;i<22;i++) {
-                const y = ROWS-3-Math.floor(Math.random()*7);
-                const ww= 2+Math.floor(Math.random()*4);
-                for (let j=0;j<ww;j++) set(m,px+j,y,2);
-                px += ww + 2 + Math.floor(Math.random()*2);
-                if (px >= w-6) break;
-            }
-            setGoal(m, w-3, ROWS-3);
+            // 地面（途切れ途切れ）
+            fillRow(m, ROWS-1, 0, 10, 1); fillRow(m, ROWS-2, 0, 10, 1);
+            fillRow(m, ROWS-1, 16, 32, 1); fillRow(m, ROWS-2, 16, 32, 1);
+            fillRow(m, ROWS-1, 38, 54, 1); fillRow(m, ROWS-2, 38, 54, 1);
+            fillRow(m, ROWS-1, 60, w, 1); fillRow(m, ROWS-2, 60, w, 1);
+            // 穴の上に足場
+            platf(m,[
+                [11,ROWS-4,3],[14,ROWS-6,2],
+                [33,ROWS-5,3],[36,ROWS-7,2],
+                [55,ROWS-4,3],[58,ROWS-6,2],
+            ]);
+            // 高台
+            platf(m,[
+                [8,ROWS-5,3],[22,ROWS-5,4],[30,ROWS-7,3],
+                [44,ROWS-5,3],[52,ROWS-6,3],[65,ROWS-5,4],
+            ]);
+            // ゴール台座（最終地点）
+            platf(m, [[w-5, ROWS-4, 3]]);
+            setGoal(m, w-4, ROWS-5);
             return m;
         }
     },
@@ -842,11 +851,15 @@ function loadLevel(idx) {
 
     enemies=[]; items=[]; bullets=[]; particles=[]; enemyBullets=[]; goal=null;
 
-    // ゴール
+    // ゴール（周囲のタイルをクリアして埋まり防止）
     for (let r=0; r<levelMap.length; r++) for (let c=0; c<levelMap[r].length; c++) {
         if (levelMap[r][c]===5) {
             goal = {x:c*TILE, y:r*TILE - TILE*2, w:TILE, h:TILE*3, t:0};
             levelMap[r][c]=0;
+            // ゴールの上3マスを空ける
+            for (let dr=-3; dr<0; dr++) {
+                if (r+dr>=0) set(levelMap,c,r+dr,0);
+            }
         }
     }
     // 敵スポーン
@@ -881,7 +894,7 @@ function updatePlayer() {
     player.vx *= FRICTION;
     const maxHSpd = 5 * player.upgrades.moveSpeed;
     player.vx = Math.max(-maxHSpd, Math.min(maxHSpd, player.vx));
-    player.vy = Math.max(-12, Math.min(9, player.vy));  // 落下速度を制限してふわっと感
+    player.vy = Math.max(-10, Math.min(7, player.vy));  // 落下速度を制限してふわっと感
 
     // X軸移動
     player.x += player.vx;
