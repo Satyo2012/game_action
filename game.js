@@ -489,7 +489,7 @@ class Zombie extends Enemy {
 // シェード（飛行・上空旋回→急降下攻撃）
 class Shade extends Enemy {
     constructor(x, y) {
-        super(x, y, 26, 26, 35, 1.5, '#2200aa', 0.4);
+        super(x, y, 26, 26, 35, 0.5, '#2200aa', 0.4);
         this.scoreVal = 150;
         this.angle = 0;
         // 行動状態: 'hover'=上空旋回, 'dive'=急降下, 'retreat'=上昇帰還
@@ -509,15 +509,15 @@ class Shade extends Enemy {
 
         if (this.mode === 'hover') {
             // プレイヤーの上空を旋回（80-120px上）
-            this.hoverAngle += 0.025;
+            this.hoverAngle += 0.012;
             this.hoverTimer++;
             const orbitR = 80;
             const targetX = px + Math.cos(this.hoverAngle) * orbitR;
             const targetY = py - 110 + Math.sin(this.hoverAngle * 2) * 20;
-            this.vx += (targetX - cx) * 0.02;
-            this.vy += (targetY - cy) * 0.02;
-            this.vx *= 0.92;
-            this.vy *= 0.92;
+            this.vx += (targetX - cx) * 0.008;
+            this.vy += (targetY - cy) * 0.008;
+            this.vx *= 0.94;
+            this.vy *= 0.94;
             // 一定時間旋回したら急降下
             if (this.hoverTimer > 120 + Math.random() * 60) {
                 this.mode = 'dive';
@@ -531,10 +531,10 @@ class Shade extends Enemy {
             const dx = this.targetX - cx;
             const dy = this.targetY - cy;
             const dist = Math.sqrt(dx*dx + dy*dy) || 1;
-            this.vx += (dx/dist) * 0.5;
-            this.vy += (dy/dist) * 0.5;
+            this.vx += (dx/dist) * 0.18;
+            this.vy += (dy/dist) * 0.18;
             const spd = Math.sqrt(this.vx*this.vx + this.vy*this.vy);
-            const maxDiveSpd = 4;
+            const maxDiveSpd = 1.8;
             if (spd > maxDiveSpd) { this.vx = this.vx/spd*maxDiveSpd; this.vy = this.vy/spd*maxDiveSpd; }
             // 突っ込んだか時間切れで上昇帰還
             if (this.diveTimer > 60 || dist < 20) {
@@ -545,7 +545,7 @@ class Shade extends Enemy {
             // 上空へ戻る
             this.diveTimer++;
             this.vx *= 0.95;
-            this.vy -= 0.3;
+            this.vy -= 0.12;
             this.vy *= 0.95;
             if (this.diveTimer > 50) {
                 this.mode = 'hover';
@@ -671,23 +671,15 @@ class Demon extends Enemy {
     }
 }
 
-// スポーナー（固定・周期的に雑魚召喚・リング弾）
+// スポーナー（固定・リング弾のみ）
 class Spawner extends Enemy {
     constructor(x, y) {
         super(x, y, 36, 36, 180, 0, '#330022', 0.8);
-        this.spawnCd = 0;
         this.shootCd = 90;
         this.scoreVal = 300;
     }
     update() {
         this.t++;
-        this.spawnCd--;
-        if (this.spawnCd <= 0) {
-            this.spawnCd = 200;
-            if (enemies.length < 30) {
-                enemies.push(new Shade(this.x + (Math.random()-0.5)*60, this.y - 20));
-            }
-        }
         // リング弾（8方向・ゆっくり）
         this.shootCd--;
         if (this.shootCd <= 0) {
@@ -963,8 +955,9 @@ function updatePlayer() {
             it.applyTo();
     }
 
-    // ゴール
-    if (goal && rectsOverlap({x:player.x,y:player.y,w:player.w,h:player.h}, goal)) {
+    // ゴール（敵を全滅させないと進めない）
+    const enemiesAlive = enemies.filter(e=>e.alive).length;
+    if (goal && enemiesAlive === 0 && rectsOverlap({x:player.x,y:player.y,w:player.w,h:player.h}, goal)) {
         score += 500;
         currentLevelIdx++;
         if (currentLevelIdx >= LEVELS.length) state=S.CLEAR;
@@ -1103,22 +1096,37 @@ function drawGoal() {
     goal.t += 0.03;
     const sx = goal.x - cameraX;
     if (sx < -60 || sx > canvas.width+60) return;
-    ctx.shadowBlur=25; ctx.shadowColor='#ffcc00';
+    const alive = enemies.filter(e=>e.alive).length;
+    const unlocked = alive === 0;
+    ctx.shadowBlur=25; ctx.shadowColor= unlocked ? '#ffcc00' : '#444';
     // ポール
-    ctx.fillStyle='#554400';
+    ctx.fillStyle= unlocked ? '#554400' : '#222';
     ctx.fillRect(sx+TILE/2-3, goal.y, 6, goal.h);
     // 旗
     const w=Math.cos(goal.t*2)*4;
-    ctx.fillStyle='#cc0000';
+    ctx.fillStyle= unlocked ? '#cc0000' : '#440000';
     ctx.beginPath();
     ctx.moveTo(sx+TILE/2+3, goal.y+4);
     ctx.lineTo(sx+TILE/2+36+w, goal.y+14);
     ctx.lineTo(sx+TILE/2+3, goal.y+28);
     ctx.fill();
     // 光
-    ctx.fillStyle=`rgba(255,200,0,${0.2+Math.sin(goal.t*3)*0.15})`;
-    ctx.beginPath();
-    ctx.arc(sx+TILE/2, goal.y, 24, 0, Math.PI*2); ctx.fill();
+    if (unlocked) {
+        ctx.fillStyle=`rgba(255,200,0,${0.2+Math.sin(goal.t*3)*0.15})`;
+        ctx.beginPath();
+        ctx.arc(sx+TILE/2, goal.y, 24, 0, Math.PI*2); ctx.fill();
+    } else {
+        // 鍵マーク表示
+        ctx.fillStyle='#aa4444';
+        ctx.shadowBlur=8; ctx.shadowColor='#aa0000';
+        ctx.font='bold 14px monospace';
+        ctx.textAlign='center';
+        ctx.fillText('🔒', sx+TILE/2, goal.y + goal.h + 18);
+        ctx.fillStyle='#884444';
+        ctx.font='10px monospace';
+        ctx.fillText(`残り${alive}体`, sx+TILE/2, goal.y + goal.h + 32);
+        ctx.textAlign='left';
+    }
     ctx.shadowBlur=0;
 }
 
