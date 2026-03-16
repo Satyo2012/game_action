@@ -519,12 +519,12 @@ class Item {
     applyTo() {
         const t = this.type;
         if      (t === 'MULTISHOT')  player.upgrades.multiShot   = Math.min(player.upgrades.multiShot + 1, 9);
-        else if (t === 'FIRERATE')   player.upgrades.fireRate     = Math.min(player.upgrades.fireRate  * 1.35, 6);
-        else if (t === 'BULLETSIZE') player.upgrades.bulletSize   = Math.min(player.upgrades.bulletSize* 1.4, 5);
-        else if (t === 'SPEED_UP')   player.upgrades.moveSpeed    = Math.min(player.upgrades.moveSpeed * 1.25, 3);
-        else if (t === 'JUMP_UP')    player.upgrades.jumpPower    = Math.min(player.upgrades.jumpPower * 1.2, 2.5);
-        else if (t === 'HEAL')       player.hp = Math.min(player.hp + 30, player.maxHp);
-        else if (t === 'MAXHP_UP')  { player.maxHp += 20; player.hp = Math.min(player.hp + 20, player.maxHp); }
+        else if (t === 'FIRERATE')   player.upgrades.fireRate     = Math.min(player.upgrades.fireRate  * 1.15, 4);
+        else if (t === 'BULLETSIZE') player.upgrades.bulletSize   = Math.min(player.upgrades.bulletSize* 1.2, 3);
+        else if (t === 'SPEED_UP')   player.upgrades.moveSpeed    = Math.min(player.upgrades.moveSpeed * 1.12, 2);
+        else if (t === 'JUMP_UP')    player.upgrades.jumpPower    = Math.min(player.upgrades.jumpPower * 1.1, 1.8);
+        else if (t === 'HEAL')       player.hp = Math.min(player.hp + 15, player.maxHp);
+        else if (t === 'MAXHP_UP')  { player.maxHp += 10; player.hp = Math.min(player.hp + 10, player.maxHp); }
         else if (t.startsWith('WEAPON_')) player.weapon = t.replace('WEAPON_','');
         this.collected = true;
         spawnParticles(this.x, this.y, ITEM_DEFS[t].color, 14, 4);
@@ -591,7 +591,7 @@ class Enemy {
         this.alive=true; this.onGround=false;
         this.t=Math.random()*100;
         this.sleeping=false; // trueの間は動かない
-        this.activateRange=350; // プレイヤーがこの距離以内で覚醒
+        this.activateRange=700; // プレイヤーがこの距離以内で覚醒（画面に入る前に起動）
     }
     _checkWake() {
         if (!this.sleeping) return true;
@@ -630,6 +630,21 @@ class Enemy {
     _applyGravity() {
         this.vy += GRAVITY;
         if (this.vy > 14) this.vy = 14;
+    }
+    // 崖端検出: 進行方向の足元に床がなければ反転
+    _edgeCheck() {
+        if (!this.onGround) return;
+        const ahead = this.vx > 0 ? this.x + this.w + 2 : this.x - 2;
+        const below = this.y + this.h + 4;
+        const col = Math.floor(ahead / TILE);
+        const row = Math.floor(below / TILE);
+        if (row >= 0 && row < levelMap.length && col >= 0 && col < (levelMap[0]||[]).length) {
+            if (levelMap[row][col] !== 1 && levelMap[row][col] !== 2) {
+                this.vx *= -1; // 床がないので反転
+            }
+        } else {
+            this.vx *= -1; // マップ外なので反転
+        }
     }
     _moveX() {
         this.x += this.vx;
@@ -676,6 +691,7 @@ class Zombie extends Enemy {
         this._applyGravity();
         this._moveX();
         this._moveY();
+        this._edgeCheck();
         // プレイヤー方向に少し引き寄せ
         const dx = player.x - this.x;
         this.vx += Math.sign(dx) * 0.04;
@@ -847,6 +863,7 @@ class Demon extends Enemy {
         this._applyGravity();
         this._moveX();
         this._moveY();
+        this._edgeCheck();
         // 定期的にダッシュ
         if (this.t % 180 === 0) {
             const dx = player.x - this.x;
@@ -2069,12 +2086,12 @@ function applyReward() {
     // アイテム効果を適用
     const t = choice;
     if      (t === 'MULTISHOT')  player.upgrades.multiShot   = Math.min(player.upgrades.multiShot + 1, 9);
-    else if (t === 'FIRERATE')   player.upgrades.fireRate     = Math.min(player.upgrades.fireRate  * 1.35, 6);
-    else if (t === 'BULLETSIZE') player.upgrades.bulletSize   = Math.min(player.upgrades.bulletSize* 1.4, 5);
-    else if (t === 'SPEED_UP')   player.upgrades.moveSpeed    = Math.min(player.upgrades.moveSpeed * 1.25, 3);
-    else if (t === 'JUMP_UP')    player.upgrades.jumpPower    = Math.min(player.upgrades.jumpPower * 1.2, 2.5);
-    else if (t === 'HEAL')       player.hp = Math.min(player.hp + 50, player.maxHp);
-    else if (t === 'MAXHP_UP')  { player.maxHp += 30; player.hp = Math.min(player.hp + 30, player.maxHp); }
+    else if (t === 'FIRERATE')   player.upgrades.fireRate     = Math.min(player.upgrades.fireRate  * 1.15, 4);
+    else if (t === 'BULLETSIZE') player.upgrades.bulletSize   = Math.min(player.upgrades.bulletSize* 1.2, 3);
+    else if (t === 'SPEED_UP')   player.upgrades.moveSpeed    = Math.min(player.upgrades.moveSpeed * 1.12, 2);
+    else if (t === 'JUMP_UP')    player.upgrades.jumpPower    = Math.min(player.upgrades.jumpPower * 1.1, 1.8);
+    else if (t === 'HEAL')       player.hp = Math.min(player.hp + 25, player.maxHp);
+    else if (t === 'MAXHP_UP')  { player.maxHp += 15; player.hp = Math.min(player.hp + 15, player.maxHp); }
     else if (t.startsWith('WEAPON_')) player.weapon = t.replace('WEAPON_','');
     sfxItemPickup();
     showPickupText(ITEM_DEFS[t].label, ITEM_DEFS[t].color);
@@ -2159,12 +2176,12 @@ function drawReward() {
 function getItemDescription(key) {
     switch(key) {
         case 'MULTISHOT':      return '弾の発射数+1';
-        case 'FIRERATE':       return '攻撃速度×1.35';
-        case 'BULLETSIZE':     return '弾のサイズ×1.4';
-        case 'SPEED_UP':       return '移動速度×1.25';
-        case 'JUMP_UP':        return 'ジャンプ力×1.2';
-        case 'HEAL':           return 'HP 50回復';
-        case 'MAXHP_UP':       return '最大HP +30\nHP 30回復';
+        case 'FIRERATE':       return '攻撃速度×1.15';
+        case 'BULLETSIZE':     return '弾のサイズ×1.2';
+        case 'SPEED_UP':       return '移動速度×1.12';
+        case 'JUMP_UP':        return 'ジャンプ力×1.1';
+        case 'HEAL':           return 'HP 25回復';
+        case 'MAXHP_UP':       return '最大HP +15\nHP 15回復';
         case 'WEAPON_SHOTGUN': return '近距離散弾\n高火力×6発';
         case 'WEAPON_SMG':     return '高速連射\n弾幕で制圧';
         case 'WEAPON_SNIPER':  return '貫通高威力\n一撃必殺';
