@@ -10,10 +10,10 @@ canvas.width  = 960;
 canvas.height = 540;
 
 // ---- 定数 ----
-const GRAVITY     = 0.55;
+const GRAVITY     = 0.30;    // ふわっとジャンプ
 const FRICTION    = 0.78;
-const MOVE_SPEED  = 0.65;   // 遅めに
-const JUMP_FORCE  = -12.5;
+const BASE_MOVE_SPEED = 0.65;
+const BASE_JUMP_FORCE = -9.0; // ふわっとジャンプ
 const TILE        = 40;
 const COLS        = Math.ceil(canvas.width  / TILE);
 const ROWS        = Math.ceil(canvas.height / TILE);
@@ -32,6 +32,7 @@ let shakeAmt = 0;
 let levelMap = [];
 let goal     = null;
 let currentLevelIdx = 0;
+let enemyBullets = [];  // 敵弾
 
 // ---- マウス ----
 const mouse = { x: canvas.width/2, y: canvas.height/2, down: false };
@@ -58,11 +59,11 @@ window.addEventListener('keyup', e => keys[e.code] = false);
 //  武器定義
 // ============================================================
 const WEAPONS = {
-    PISTOL:  { name:'ピストル',   dmg:28,  cd:12, spd:14, spread:0.04, color:'#00e5ff', glow:'#003344', pellets:1, piercing:false, bouncing:false, explosive:false },
-    SHOTGUN: { name:'ショットガン',dmg:45,  cd:38, spd:10, spread:0.25, color:'#ff6a00', glow:'#332000', pellets:6, piercing:false, bouncing:false, explosive:false },
-    SMG:     { name:'SMG',        dmg:14,  cd:4,  spd:16, spread:0.11, color:'#00ff88', glow:'#003322', pellets:1, piercing:false, bouncing:false, explosive:false },
-    SNIPER:  { name:'スナイパー', dmg:200, cd:50, spd:22, spread:0.00, color:'#ff00ff', glow:'#220033', pellets:1, piercing:true,  bouncing:false, explosive:false },
-    PLASMA:  { name:'プラズマ',   dmg:70,  cd:25, spd:9,  spread:0.09, color:'#aa00ff', glow:'#110022', pellets:1, piercing:false, bouncing:true,  explosive:true,  explodeR:65 },
+    PISTOL:  { name:'ピストル',   dmg:28,  cd:30, spd:14, spread:0.04, color:'#00e5ff', glow:'#003344', pellets:1, piercing:false, bouncing:false, explosive:false },
+    SHOTGUN: { name:'ショットガン',dmg:45,  cd:60, spd:10, spread:0.25, color:'#ff6a00', glow:'#332000', pellets:6, piercing:false, bouncing:false, explosive:false },
+    SMG:     { name:'SMG',        dmg:14,  cd:12, spd:16, spread:0.11, color:'#00ff88', glow:'#003322', pellets:1, piercing:false, bouncing:false, explosive:false },
+    SNIPER:  { name:'スナイパー', dmg:200, cd:75, spd:22, spread:0.00, color:'#ff00ff', glow:'#220033', pellets:1, piercing:true,  bouncing:false, explosive:false },
+    PLASMA:  { name:'プラズマ',   dmg:70,  cd:45, spd:9,  spread:0.09, color:'#aa00ff', glow:'#110022', pellets:1, piercing:false, bouncing:true,  explosive:true,  explodeR:65 },
 };
 
 // ============================================================
@@ -76,7 +77,7 @@ const player = {
     hp:100, maxHp:100,
     weapon:'PISTOL',
     fireCd:0,
-    upgrades:{ multiShot:1, fireRate:1.0, bulletSize:1.0 },
+    upgrades:{ multiShot:1, fireRate:1.0, bulletSize:1.0, moveSpeed:1.0, jumpPower:1.0 },
     animTimer:0,
     stomping:false,
 };
@@ -180,6 +181,98 @@ class Bullet {
 }
 
 // ============================================================
+//  敵弾クラス（ゆっくり・大きく・光る警告弾）
+// ============================================================
+class EnemyBullet {
+    constructor(x, y, vx, vy, size, color) {
+        this.x = x; this.y = y;
+        this.vx = vx; this.vy = vy;
+        this.alive = true;
+        this.size = size || 8;
+        this.color = color || '#ffaa00';
+        this.t = 0;
+        this.dmg = 15;
+    }
+    update() {
+        if (!this.alive) return;
+        this.t++;
+        this.x += this.vx;
+        this.y += this.vy;
+        // タイル衝突
+        const col = Math.floor(this.x / TILE);
+        const row = Math.floor(this.y / TILE);
+        if (row >= 0 && row < levelMap.length && col >= 0 && col < (levelMap[0]||[]).length) {
+            if (levelMap[row][col] === 1 || levelMap[row][col] === 2) {
+                this.alive = false;
+                spawnParticles(this.x, this.y, this.color, 5, 3);
+            }
+        }
+        // 画面外
+        const maxX = levelMap[0] ? levelMap[0].length * TILE + 200 : 9999;
+        if (this.x < -200 || this.x > maxX || this.y < -200 || this.y > canvas.height + 200)
+            this.alive = false;
+    }
+    draw(camX) {
+        if (!this.alive) return;
+        const sx = this.x - camX;
+        if (sx < -40 || sx > canvas.width + 40) return;
+        const pulse = 1 + Math.sin(this.t * 0.3) * 0.3;
+        const r = this.size * pulse;
+        // 外側のグロー（大きな警告リング）
+        ctx.strokeStyle = this.color;
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.3 + Math.sin(this.t * 0.4) * 0.2;
+        ctx.shadowBlur = 30;
+        ctx.shadowColor = this.color;
+        ctx.beginPath();
+        ctx.arc(sx, this.y, r + 6, 0, Math.PI * 2);
+        ctx.stroke();
+        // 本体
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(sx, this.y, r, 0, Math.PI * 2);
+        ctx.fill();
+        // 中心の白い光
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(sx, this.y, r * 0.4, 0, Math.PI * 2);
+        ctx.fill();
+        // 十字マーク（弾だと分かりやすく）
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(sx - r - 3, this.y);
+        ctx.lineTo(sx + r + 3, this.y);
+        ctx.moveTo(sx, this.y - r - 3);
+        ctx.lineTo(sx, this.y + r + 3);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.shadowBlur = 0;
+    }
+}
+
+// 敵が弾をプレイヤー方向に撃つヘルパー
+function enemyShoot(ex, ey, speed, size, color, count, spreadAngle) {
+    const dx = player.x + player.w/2 - ex;
+    const dy = player.y + player.h/2 - ey;
+    const base = Math.atan2(dy, dx);
+    count = count || 1;
+    spreadAngle = spreadAngle || 0;
+    for (let i = 0; i < count; i++) {
+        const a = count > 1
+            ? base + (i - (count-1)/2) * spreadAngle
+            : base;
+        enemyBullets.push(new EnemyBullet(
+            ex, ey,
+            Math.cos(a) * speed,
+            Math.sin(a) * speed,
+            size, color
+        ));
+    }
+}
+
+// ============================================================
 //  パーティクル
 // ============================================================
 class Particle {
@@ -214,6 +307,10 @@ const ITEM_DEFS = {
     MULTISHOT:      { label:'+弾数',       color:'#00e5ff', icon:'◉' },
     FIRERATE:       { label:'+速射',       color:'#ffdd00', icon:'⚡' },
     BULLETSIZE:     { label:'+弾肥大化',   color:'#ff44cc', icon:'◎' },
+    SPEED_UP:       { label:'+移動速度',   color:'#44ffaa', icon:'»' },
+    JUMP_UP:        { label:'+跳躍力',     color:'#88ffff', icon:'↑' },
+    HEAL:           { label:'HP回復',      color:'#22ff44', icon:'+' },
+    MAXHP_UP:       { label:'+最大HP',     color:'#ff8844', icon:'♥' },
     WEAPON_SHOTGUN: { label:'ショットガン', color:'#ff6a00', icon:'S' },
     WEAPON_SMG:     { label:'SMG',         color:'#00ff88', icon:'M' },
     WEAPON_SNIPER:  { label:'スナイパー',   color:'#ff00ff', icon:'N' },
@@ -253,6 +350,10 @@ class Item {
         if      (t === 'MULTISHOT')  player.upgrades.multiShot   = Math.min(player.upgrades.multiShot + 1, 9);
         else if (t === 'FIRERATE')   player.upgrades.fireRate     = Math.min(player.upgrades.fireRate  * 1.35, 6);
         else if (t === 'BULLETSIZE') player.upgrades.bulletSize   = Math.min(player.upgrades.bulletSize* 1.4, 5);
+        else if (t === 'SPEED_UP')   player.upgrades.moveSpeed    = Math.min(player.upgrades.moveSpeed * 1.25, 3);
+        else if (t === 'JUMP_UP')    player.upgrades.jumpPower    = Math.min(player.upgrades.jumpPower * 1.2, 2.5);
+        else if (t === 'HEAL')       player.hp = Math.min(player.hp + 30, player.maxHp);
+        else if (t === 'MAXHP_UP')  { player.maxHp += 20; player.hp = Math.min(player.hp + 20, player.maxHp); }
         else if (t.startsWith('WEAPON_')) player.weapon = t.replace('WEAPON_','');
         this.collected = true;
         spawnParticles(this.x, this.y, ITEM_DEFS[t].color, 14, 4);
@@ -296,8 +397,8 @@ class Enemy {
         if (Math.random() < this.dropRate) this._dropItem();
     }
     _dropItem() {
-        const pool = ['MULTISHOT','FIRERATE','BULLETSIZE','WEAPON_SHOTGUN','WEAPON_SMG','WEAPON_SNIPER','WEAPON_PLASMA'];
-        const weights= [35, 30, 25, 3, 3, 2, 2];
+        const pool =   ['MULTISHOT','FIRERATE','BULLETSIZE','SPEED_UP','JUMP_UP','HEAL','MAXHP_UP','WEAPON_SHOTGUN','WEAPON_SMG','WEAPON_SNIPER','WEAPON_PLASMA'];
+        const weights= [18,         16,        14,          10,        8,        15,    8,         3,               3,            2,              3];
         let r = Math.random()*100, acc=0;
         for (let i=0;i<pool.length;i++) {
             acc+=weights[i];
@@ -340,12 +441,13 @@ class Enemy {
     }
 }
 
-// ゾンビ（低速・壁で折り返し）
+// ゾンビ（低速・壁で折り返し・たまに射撃）
 class Zombie extends Enemy {
     constructor(x, y) {
         super(x, y, 30, 40, 60, 1.2, '#4a0e0e', 0.5);
         this.vx = (Math.random()<0.5?1:-1)*this.spd;
         this.scoreVal = 120;
+        this.shootCd = 120 + Math.random()*60|0;
     }
     update() {
         this.t++;
@@ -356,6 +458,13 @@ class Zombie extends Enemy {
         const dx = player.x - this.x;
         this.vx += Math.sign(dx) * 0.04;
         this.vx = Math.max(-this.spd, Math.min(this.spd, this.vx));
+        // 射撃（遅い単発弾）
+        this.shootCd--;
+        if (this.shootCd <= 0) {
+            this.shootCd = 150 + Math.random()*80|0;
+            const dist = Math.abs(player.x - this.x);
+            if (dist < 500) enemyShoot(this.x+this.w/2, this.y+this.h/3, 2.5, 7, '#ff6633', 1);
+        }
     }
     draw(camX) {
         if (!this.alive) return;
@@ -422,12 +531,13 @@ class Shade extends Enemy {
     }
 }
 
-// デーモン（巨大・高耐久・確定ドロップ）
+// デーモン（巨大・高耐久・確定ドロップ・3way射撃）
 class Demon extends Enemy {
     constructor(x, y) {
         super(x, y, 48, 56, 350, 0.8, '#880000', 1.0);
         this.vx = (Math.random()<0.5?1:-1)*this.spd;
         this.scoreVal = 600;
+        this.shootCd = 80 + Math.random()*40|0;
     }
     update() {
         this.t++;
@@ -440,6 +550,13 @@ class Demon extends Enemy {
             this.vx = Math.sign(dx) * 4;
         }
         this.vx *= 0.98;
+        // 3way射撃
+        this.shootCd--;
+        if (this.shootCd <= 0) {
+            this.shootCd = 100 + Math.random()*60|0;
+            const dist = Math.abs(player.x - this.x);
+            if (dist < 600) enemyShoot(this.x+this.w/2, this.y+this.h/3, 2.0, 10, '#ff2200', 3, 0.35);
+        }
     }
     draw(camX) {
         if (!this.alive) return;
@@ -479,11 +596,12 @@ class Demon extends Enemy {
     }
 }
 
-// スポーナー（固定・周期的に雑魚召喚）
+// スポーナー（固定・周期的に雑魚召喚・リング弾）
 class Spawner extends Enemy {
     constructor(x, y) {
         super(x, y, 36, 36, 180, 0, '#330022', 0.8);
         this.spawnCd = 0;
+        this.shootCd = 90;
         this.scoreVal = 300;
     }
     update() {
@@ -493,6 +611,16 @@ class Spawner extends Enemy {
             this.spawnCd = 200;
             if (enemies.length < 30) {
                 enemies.push(new Shade(this.x + (Math.random()-0.5)*60, this.y - 20));
+            }
+        }
+        // リング弾（8方向・ゆっくり）
+        this.shootCd--;
+        if (this.shootCd <= 0) {
+            this.shootCd = 130 + Math.random()*40|0;
+            const cx = this.x + this.w/2, cy = this.y + this.h/2;
+            for (let i = 0; i < 8; i++) {
+                const a = (Math.PI * 2 / 8) * i + this.t * 0.01;
+                enemyBullets.push(new EnemyBullet(cx, cy, Math.cos(a)*1.8, Math.sin(a)*1.8, 6, '#cc00aa'));
             }
         }
     }
@@ -645,7 +773,7 @@ function loadLevel(idx) {
     const lvl = LEVELS[idx];
     levelMap = lvl.generate(lvl.width);
 
-    enemies=[]; items=[]; bullets=[]; particles=[]; goal=null;
+    enemies=[]; items=[]; bullets=[]; particles=[]; enemyBullets=[]; goal=null;
 
     // ゴール
     for (let r=0; r<levelMap.length; r++) for (let c=0; c<levelMap[r].length; c++) {
@@ -673,17 +801,20 @@ function loadLevel(idx) {
 // ============================================================
 function updatePlayer() {
     // 移動
-    if (keys['KeyA']||keys['ArrowLeft'])  player.vx -= MOVE_SPEED;
-    if (keys['KeyD']||keys['ArrowRight']) player.vx += MOVE_SPEED;
-    // ジャンプ
+    const moveSpd = BASE_MOVE_SPEED * player.upgrades.moveSpeed;
+    if (keys['KeyA']||keys['ArrowLeft'])  player.vx -= moveSpd;
+    if (keys['KeyD']||keys['ArrowRight']) player.vx += moveSpd;
+    // ジャンプ（ふわっと）
+    const jumpF = BASE_JUMP_FORCE * player.upgrades.jumpPower;
     if ((keys['KeyW']||keys['ArrowUp']||keys['Space']) && player.onGround) {
-        player.vy = JUMP_FORCE;
+        player.vy = jumpF;
         spawnParticles(player.x+player.w/2, player.y+player.h, '#444', 6, 2);
     }
     player.vy += GRAVITY;
     player.vx *= FRICTION;
-    player.vx = Math.max(-7, Math.min(7, player.vx));
-    player.vy = Math.max(-15, Math.min(15, player.vy));
+    const maxHSpd = 5 * player.upgrades.moveSpeed;
+    player.vx = Math.max(-maxHSpd, Math.min(maxHSpd, player.vx));
+    player.vy = Math.max(-12, Math.min(9, player.vy));  // 落下速度を制限してふわっと感
 
     // X軸移動
     player.x += player.vx;
@@ -733,6 +864,20 @@ function updatePlayer() {
             shakeAmt = 7;
         } else if (player.invincible<=0) {
             playerHit(25);
+        }
+    }
+
+    // 敵弾との当たり判定
+    if (player.invincible <= 0) {
+        for (const eb of enemyBullets) {
+            if (!eb.alive) continue;
+            const dx = player.x+player.w/2 - eb.x;
+            const dy = player.y+player.h/2 - eb.y;
+            if (Math.sqrt(dx*dx+dy*dy) < eb.size + 12) {
+                eb.alive = false;
+                spawnParticles(eb.x, eb.y, eb.color, 8, 3);
+                playerHit(eb.dmg);
+            }
         }
     }
 
@@ -974,14 +1119,16 @@ function drawHUD() {
     // 武器
     const W = WEAPONS[player.weapon];
     ctx.fillStyle='rgba(0,0,0,0.7)';
-    ctx.fillRect(10,60,200,50);
+    ctx.fillRect(10,60,220,62);
     ctx.shadowBlur=10; ctx.shadowColor=W.color;
     ctx.strokeStyle=W.color; ctx.lineWidth=1;
-    ctx.strokeRect(10,60,200,50);
+    ctx.strokeRect(10,60,220,62);
     ctx.fillStyle=W.color; ctx.font='bold 13px monospace';
     ctx.fillText(`武器: ${W.name}`, 15, 77);
     ctx.fillStyle='#888'; ctx.font='11px monospace';
     ctx.fillText(`弾数×${player.upgrades.multiShot}  速射×${player.upgrades.fireRate.toFixed(1)}  弾サイズ×${player.upgrades.bulletSize.toFixed(1)}`, 15, 92);
+    ctx.fillStyle='#668'; ctx.font='10px monospace';
+    ctx.fillText(`脚力×${player.upgrades.moveSpeed.toFixed(1)}  跳躍×${player.upgrades.jumpPower.toFixed(1)}`, 15, 106);
     ctx.shadowBlur=0;
 
     // レベル
@@ -1128,8 +1275,8 @@ function startGame() {
     score=0; currentLevelIdx=0;
     player.hp=player.maxHp;
     player.weapon='PISTOL';
-    player.upgrades={multiShot:1, fireRate:1.0, bulletSize:1.0};
-    pickupTexts=[];
+    player.upgrades={multiShot:1, fireRate:1.0, bulletSize:1.0, moveSpeed:1.0, jumpPower:1.0};
+    pickupTexts=[]; enemyBullets=[];
     loadLevel(0);
     state=S.PLAY;
 }
@@ -1143,6 +1290,9 @@ function update() {
     updatePlayer();
     for (const e of enemies) if (e.alive) e.update();
     updateBullets();
+    // 敵弾更新
+    for (const eb of enemyBullets) if (eb.alive) eb.update();
+    enemyBullets = enemyBullets.filter(b=>b.alive);
     for (const it of items) if (!it.collected) it.update();
     particles=particles.filter(p=>p.life>0);
     for (const p of particles) p.update();
@@ -1164,6 +1314,7 @@ function draw() {
         for (const e of enemies) e.draw(cameraX);
         for (const it of items)  it.draw(cameraX);
         for (const b of bullets) b.draw(cameraX);
+        for (const eb of enemyBullets) eb.draw(cameraX);
         for (const p of particles) p.draw(cameraX);
         drawPlayer();
         drawPickupTexts(cameraX);
