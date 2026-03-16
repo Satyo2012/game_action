@@ -108,11 +108,7 @@ function sfxDeath() {
     notes.forEach((n,i) => setTimeout(()=>playTone(n, 0.2, 'square', 0.3), i*150));
 }
 
-// ---- BGM（8bitループ） ----
-const BGM_TEMPO = 180; // BPM
-const BGM_BEAT = 60000 / BGM_TEMPO; // ms per beat
-
-// ダークなメロディ（音程周波数）
+// ---- BGM（ステージ別8bitループ） ----
 const NOTE = {
     C3:131,D3:147,Eb3:156,E3:165,F3:175,G3:196,Ab3:208,A3:220,Bb3:233,B3:247,
     C4:262,D4:294,Eb4:311,E4:330,F4:349,G4:392,Ab4:415,A4:440,Bb4:466,B4:494,
@@ -120,48 +116,65 @@ const NOTE = {
     R:0
 };
 
-// メロディ（Cマイナー風ダークテーマ）
-const bgmMelody = [
-    NOTE.C4, NOTE.Eb4, NOTE.G4, NOTE.C4,
-    NOTE.Ab3, NOTE.Eb4, NOTE.G4, NOTE.R,
-    NOTE.Bb3, NOTE.D4, NOTE.F4, NOTE.Bb3,
-    NOTE.G3, NOTE.D4, NOTE.F4, NOTE.R,
-    NOTE.C4, NOTE.Eb4, NOTE.Ab4, NOTE.G4,
-    NOTE.F4, NOTE.Eb4, NOTE.D4, NOTE.C4,
-    NOTE.Bb3, NOTE.D4, NOTE.G4, NOTE.F4,
-    NOTE.Eb4, NOTE.D4, NOTE.C4, NOTE.R,
-];
+// Stage1: Cマイナー ダークテーマ (BPM180)
+const BGM1 = {
+    tempo:180,
+    mel:[NOTE.C4,NOTE.Eb4,NOTE.G4,NOTE.C4, NOTE.Ab3,NOTE.Eb4,NOTE.G4,NOTE.R,
+         NOTE.Bb3,NOTE.D4,NOTE.F4,NOTE.Bb3, NOTE.G3,NOTE.D4,NOTE.F4,NOTE.R,
+         NOTE.C4,NOTE.Eb4,NOTE.Ab4,NOTE.G4, NOTE.F4,NOTE.Eb4,NOTE.D4,NOTE.C4,
+         NOTE.Bb3,NOTE.D4,NOTE.G4,NOTE.F4, NOTE.Eb4,NOTE.D4,NOTE.C4,NOTE.R],
+    bas:[NOTE.C3,NOTE.R,NOTE.C3,NOTE.G3, NOTE.Ab3,NOTE.R,NOTE.Ab3,NOTE.Eb3,
+         NOTE.Bb3,NOTE.R,NOTE.Bb3,NOTE.F3, NOTE.G3,NOTE.R,NOTE.G3,NOTE.D3,
+         NOTE.C3,NOTE.R,NOTE.C3,NOTE.G3, NOTE.F3,NOTE.R,NOTE.F3,NOTE.C3,
+         NOTE.Bb3,NOTE.R,NOTE.Bb3,NOTE.F3, NOTE.G3,NOTE.R,NOTE.G3,NOTE.R],
+};
+// Stage2: Eマイナー 氷のワルツ風 (BPM150)
+const BGM2 = {
+    tempo:150,
+    mel:[NOTE.E4,NOTE.G4,NOTE.B4,NOTE.E4, NOTE.D4,NOTE.G4,NOTE.B4,NOTE.R,
+         NOTE.C4,NOTE.E4,NOTE.A4,NOTE.C4, NOTE.B3,NOTE.E4,NOTE.G4,NOTE.R,
+         NOTE.E4,NOTE.Ab4,NOTE.B4,NOTE.E5, NOTE.D5,NOTE.B4,NOTE.G4,NOTE.E4,
+         NOTE.C4,NOTE.E4,NOTE.A4,NOTE.G4, NOTE.E4,NOTE.D4,NOTE.B3,NOTE.R],
+    bas:[NOTE.E3,NOTE.R,NOTE.B3,NOTE.E3, NOTE.D3,NOTE.R,NOTE.G3,NOTE.D3,
+         NOTE.C3,NOTE.R,NOTE.E3,NOTE.A3, NOTE.B3,NOTE.R,NOTE.E3,NOTE.B3,
+         NOTE.E3,NOTE.R,NOTE.B3,NOTE.E3, NOTE.D3,NOTE.R,NOTE.G3,NOTE.D3,
+         NOTE.C3,NOTE.R,NOTE.A3,NOTE.E3, NOTE.B3,NOTE.R,NOTE.E3,NOTE.R],
+};
+// Stage3: Aマイナー 灼熱のアグレッシブ (BPM210)
+const BGM3 = {
+    tempo:210,
+    mel:[NOTE.A4,NOTE.C5,NOTE.E5,NOTE.A4, NOTE.G4,NOTE.C5,NOTE.E5,NOTE.R,
+         NOTE.F4,NOTE.A4,NOTE.D5,NOTE.F4, NOTE.E4,NOTE.A4,NOTE.C5,NOTE.R,
+         NOTE.A4,NOTE.C5,NOTE.F5,NOTE.E5, NOTE.D5,NOTE.C5,NOTE.A4,NOTE.G4,
+         NOTE.F4,NOTE.A4,NOTE.D5,NOTE.C5, NOTE.A4,NOTE.G4,NOTE.E4,NOTE.R],
+    bas:[NOTE.A3,NOTE.R,NOTE.A3,NOTE.E3, NOTE.G3,NOTE.R,NOTE.G3,NOTE.C3,
+         NOTE.F3,NOTE.R,NOTE.F3,NOTE.D3, NOTE.E3,NOTE.R,NOTE.E3,NOTE.A3,
+         NOTE.A3,NOTE.R,NOTE.A3,NOTE.E3, NOTE.D3,NOTE.R,NOTE.D3,NOTE.F3,
+         NOTE.F3,NOTE.R,NOTE.F3,NOTE.D3, NOTE.E3,NOTE.R,NOTE.A3,NOTE.R],
+};
 
-// ベースライン
-const bgmBass = [
-    NOTE.C3, NOTE.R, NOTE.C3, NOTE.G3,
-    NOTE.Ab3, NOTE.R, NOTE.Ab3, NOTE.Eb3,
-    NOTE.Bb3, NOTE.R, NOTE.Bb3, NOTE.F3,
-    NOTE.G3, NOTE.R, NOTE.G3, NOTE.D3,
-    NOTE.C3, NOTE.R, NOTE.C3, NOTE.G3,
-    NOTE.F3, NOTE.R, NOTE.F3, NOTE.C3,
-    NOTE.Bb3, NOTE.R, NOTE.Bb3, NOTE.F3,
-    NOTE.G3, NOTE.R, NOTE.G3, NOTE.R,
-];
-
+const BGMS = [BGM1, BGM2, BGM3];
 let bgmStep = 0;
+let currentBgmIdx = 0;
 
-function startBGM() {
+function startBGM(stageIdx) {
     if (bgmPlaying) return;
     bgmPlaying = true;
     bgmStep = 0;
+    currentBgmIdx = stageIdx || 0;
+    const bgm = BGMS[currentBgmIdx] || BGMS[0];
+    const beat = 60000 / bgm.tempo;
     bgmInterval = setInterval(()=>{
         if (!audioCtx || state === S.TITLE) return;
-        const i = bgmStep % bgmMelody.length;
-        const mel = bgmMelody[i];
-        const bas = bgmBass[i];
-        if (mel > 0) playTone(mel, BGM_BEAT/1000 * 0.8, 'square', 0.12);
-        if (bas > 0) playTone(bas, BGM_BEAT/1000 * 0.8, 'triangle', 0.15);
-        // ドラム（4拍ごとにキック、2拍目・4拍目にハイハット）
+        const i = bgmStep % bgm.mel.length;
+        const mel = bgm.mel[i];
+        const bas = bgm.bas[i];
+        if (mel > 0) playTone(mel, beat/1000 * 0.8, 'square', 0.12);
+        if (bas > 0) playTone(bas, beat/1000 * 0.8, 'triangle', 0.15);
         if (i%4===0) playNoise(0.06, 0.12);
         if (i%2===1) playNoise(0.02, 0.06);
         bgmStep++;
-    }, BGM_BEAT);
+    }, beat);
 }
 
 function stopBGM() {
@@ -179,7 +192,7 @@ const COLS        = Math.ceil(canvas.width  / TILE);
 const ROWS        = Math.ceil(canvas.height / TILE);
 
 // ---- ゲーム状態 ----
-const S = { TITLE:'title', PLAY:'play', OVER:'over', CLEAR:'clear' };
+const S = { TITLE:'title', PLAY:'play', OVER:'over', CLEAR:'clear', READY:'ready' };
 let state    = S.TITLE;
 let score    = 0;
 let wave     = 1;           // ウェーブ（敵を全滅で次へ）
@@ -193,6 +206,12 @@ let levelMap = [];
 let goal     = null;
 let currentLevelIdx = 0;
 let enemyBullets = [];  // 敵弾
+let lives = 5;
+let readyTimer = 0;
+let savedUpgrades = null; // 面開始時の能力バックアップ
+let savedWeapon = 'PISTOL';
+let savedHp = 100;
+let savedMaxHp = 100;
 
 // ---- マウス ----
 const mouse = { x: canvas.width/2, y: canvas.height/2, down: false };
@@ -213,6 +232,7 @@ window.addEventListener('keydown', e => {
     if (state === S.TITLE && e.code === 'Space') startGame();
     if (state === S.OVER  && e.code === 'Space') resetGame();
     if (state === S.CLEAR && e.code === 'Space') resetGame();
+    if (state === S.READY && e.code === 'Space') { readyTimer = 1; } // スキップ
 });
 window.addEventListener('keyup', e => keys[e.code] = false);
 
@@ -839,6 +859,145 @@ class Spawner extends Enemy {
 }
 
 // ============================================================
+//  ボスクラス
+// ============================================================
+class Boss extends Enemy {
+    constructor(x, y, bossType) {
+        // bossType: 1=骸骨王, 2=氷龍, 3=魔王
+        const stats = {
+            1: { w:56, h:64, hp:800, spd:0.8, col:'#660', name:'骸骨王' },
+            2: { w:64, h:56, hp:1200, spd:0.6, col:'#069', name:'氷龍' },
+            3: { w:72, h:72, hp:2000, spd:0.5, col:'#600', name:'魔王' },
+        }[bossType];
+        super(x, y, stats.w, stats.h, stats.hp, stats.spd, stats.col, 1.0);
+        this.bossType = bossType;
+        this.bossName = stats.name;
+        this.scoreVal = bossType * 1000;
+        this.phase = 0; // 0: normal, 1: rage (hp<50%)
+        this.attackCd = 60;
+        this.pattern = 0;
+        this.vx = (Math.random()<0.5?1:-1)*this.spd;
+    }
+    update() {
+        this.t++;
+        if (this.hp < this.maxHp * 0.5 && this.phase === 0) this.phase = 1;
+        this._applyGravity();
+        this._moveX();
+        this._moveY();
+        // プレイヤー方向に移動
+        const dx = player.x - this.x;
+        const spdMul = this.phase === 1 ? 1.5 : 1;
+        this.vx += Math.sign(dx) * 0.06 * spdMul;
+        this.vx = Math.max(-this.spd*2*spdMul, Math.min(this.spd*2*spdMul, this.vx));
+        this.vx *= 0.97;
+        // ジャンプ（ランダム）
+        if (this.onGround && this.t % 120 < 2 && Math.random() < 0.3) {
+            this.vy = -8;
+        }
+        // 攻撃パターン
+        this.attackCd--;
+        if (this.attackCd <= 0) {
+            this.pattern = (this.pattern + 1) % 3;
+            const cdBase = this.phase === 1 ? 50 : 80;
+            this.attackCd = cdBase + Math.random()*40|0;
+            const cx = this.x+this.w/2, cy = this.y+this.h/3;
+            const dist = Math.abs(player.x - this.x);
+            if (dist > 800) return;
+            if (this.bossType === 1) {
+                // 骸骨王: 扇状5way弾 + 地面波
+                if (this.pattern === 0) enemyShoot(cx, cy, 2.5, 8, '#ff0', 5, 0.3);
+                else if (this.pattern === 1) {
+                    for (let i=-2;i<=2;i++) enemyBullets.push(new EnemyBullet(cx+i*40, this.y, 0, 3, 10, '#fa0'));
+                }
+                else enemyShoot(cx, cy, 3, 6, '#f80', 3, 0.2);
+            } else if (this.bossType === 2) {
+                // 氷龍: 8方向放射 + 追尾氷弾
+                if (this.pattern === 0) {
+                    for (let i=0;i<8;i++) {
+                        const a = (Math.PI*2/8)*i + this.t*0.02;
+                        enemyBullets.push(new EnemyBullet(cx,cy, Math.cos(a)*2, Math.sin(a)*2, 7, '#4df'));
+                    }
+                } else if (this.pattern === 1) enemyShoot(cx, cy, 2, 10, '#0af', 3, 0.25);
+                else {
+                    for (let i=0;i<12;i++) {
+                        const a = (Math.PI*2/12)*i;
+                        enemyBullets.push(new EnemyBullet(cx,cy, Math.cos(a)*1.5, Math.sin(a)*1.5, 5, '#8ef'));
+                    }
+                }
+            } else {
+                // 魔王: 全方向16way + 3way連射 + 召喚
+                if (this.pattern === 0) {
+                    for (let i=0;i<16;i++) {
+                        const a = (Math.PI*2/16)*i + this.t*0.01;
+                        enemyBullets.push(new EnemyBullet(cx,cy, Math.cos(a)*2, Math.sin(a)*2, 8, '#f0f'));
+                    }
+                } else if (this.pattern === 1) enemyShoot(cx, cy, 3, 10, '#f00', 5, 0.2);
+                else {
+                    // ミニゾンビ召喚（最大3体）
+                    if (enemies.filter(e=>e.alive&&!(e instanceof Boss)).length < 4) {
+                        for (let i=0;i<2;i++) enemies.push(new Zombie(this.x+(Math.random()-0.5)*80, this.y-20));
+                    }
+                }
+            }
+        }
+    }
+    draw(camX) {
+        if (!this.alive) return;
+        const sx = Math.round(this.x - camX);
+        const sy = Math.round(this.y);
+        const bob = Math.round(Math.sin(this.t*0.06)*3);
+        const y = sy + bob;
+        const rage = this.phase === 1;
+        const blink = Math.floor(this.t/4)%2;
+        if (this.bossType === 1) {
+            // 骸骨王
+            pxRect(sx+8, y, 40, 12, '#cc8'); // 頭蓋
+            pxRect(sx+4, y+12, 48, 36, rage&&blink?'#a80':'#860'); // 胴体
+            pxRect(sx+16, y+4, 8, 6, '#000'); pxRect(sx+32, y+4, 8, 6, '#000'); // 目穴
+            px(sx+18, y+5, 2, 2, rage?'#f00':'#fa0'); px(sx+34, y+5, 2, 2, rage?'#f00':'#fa0'); // 目の火
+            pxRect(sx, y+16, 8, 24, '#860'); pxRect(sx+48, y+16, 8, 24, '#860'); // 腕
+            // 王冠
+            for (let i=0;i<3;i++) pxRect(sx+14+i*10, y-8, 6, 8, '#ff0');
+            pxRect(sx+8, y+48, 14, 16, '#640'); pxRect(sx+34, y+48, 14, 16, '#640'); // 脚
+        } else if (this.bossType === 2) {
+            // 氷龍
+            pxRect(sx+16, y, 32, 16, '#4ad'); // 頭
+            pxRect(sx+8, y+16, 48, 28, rage&&blink?'#28a':'#369'); // 胴
+            pxRect(sx, y+12, 12, 8, '#4ad'); pxRect(sx+52, y+12, 12, 8, '#4ad'); // 翼
+            pxRect(sx+4, y+8, 16, 4, '#6cf'); pxRect(sx+44, y+8, 16, 4, '#6cf'); // 翼先
+            px(sx+22, y+4, 3, 3, rage?'#f44':'#fff'); px(sx+36, y+4, 3, 3, rage?'#f44':'#fff'); // 目
+            // 角
+            pxRect(sx+18, y-8, 4, 8, '#8df'); pxRect(sx+42, y-8, 4, 8, '#8df');
+            pxRect(sx+12, y+44, 12, 12, '#258'); pxRect(sx+40, y+44, 12, 12, '#258'); // 脚
+        } else {
+            // 魔王
+            pxRect(sx+12, y, 48, 20, '#400'); // 頭
+            pxRect(sx+4, y+20, 64, 36, rage&&blink?'#800':'#500'); // 胴
+            pxRect(sx, y+24, 8, 28, '#400'); pxRect(sx+64, y+24, 8, 28, '#400'); // 腕
+            // 角（大）
+            pxRect(sx+8, y-16, 8, 16, '#a00'); pxRect(sx+56, y-16, 8, 16, '#a00');
+            pxRect(sx+4, y-20, 8, 8, '#c00'); pxRect(sx+60, y-20, 8, 8, '#c00');
+            // 目
+            pxRect(sx+20, y+6, 10, 8, '#000');pxRect(sx+42, y+6, 10, 8, '#000');
+            px(sx+22, y+8, 3, 3, '#f00'); px(sx+44, y+8, 3, 3, '#f00');
+            // マント
+            pxRect(sx+8, y+56, 56, 16, '#300');
+            pxRect(sx+16, y+56, 12, 16, '#200'); pxRect(sx+44, y+56, 12, 16, '#200');
+        }
+        // ボスHPバー（画面上部中央に大きく表示）
+        const bw = 300;
+        const bx = (canvas.width - bw)/2;
+        pxRect(bx-2, canvas.height-32, bw+4, 18, '#000');
+        pxRect(bx, canvas.height-30, bw, 14, '#200');
+        pxRect(bx, canvas.height-30, Math.round(bw*(this.hp/this.maxHp)), 14, rage?'#f00':'#f80');
+        pxRect(bx, canvas.height-30, bw, 2, '#f44');
+        ctx.fillStyle='#fff'; ctx.font='bold 11px monospace'; ctx.textAlign='center';
+        ctx.fillText(`${this.bossName}`, canvas.width/2, canvas.height-20);
+        ctx.textAlign='left';
+    }
+}
+
+// ============================================================
 //  衝突ヘルパー
 // ============================================================
 function rectsOverlap(a, b) {
@@ -860,9 +1019,29 @@ function getTilesAround(px, py, pw, ph) {
 // ============================================================
 //  レベルデータ
 // ============================================================
+// ステージテーマ定義
+const STAGE_THEMES = [
+    { // Stage 1: 廃墟（ダーク紫）
+        tileFg:'#442', tileHi:'#664', tileSh:'#221', tileFg2:'#336', tileHi2:'#558', tileSh2:'#113',
+        starCol1:'#644', starCol2:'#422',
+    },
+    { // Stage 2: 氷の洞窟（ブルー）
+        tileFg:'#245', tileHi:'#48a', tileSh:'#123', tileFg2:'#246', tileHi2:'#49b', tileSh2:'#124',
+        starCol1:'#4af', starCol2:'#248',
+    },
+    { // Stage 3: 灼熱地獄（レッド）
+        tileFg:'#532', tileHi:'#a64', tileSh:'#211', tileFg2:'#534', tileHi2:'#a66', tileSh2:'#212',
+        starCol1:'#f84', starCol2:'#a42',
+    },
+];
+
+function getStageIdx() { return Math.floor(currentLevelIdx / 4); }
+function getStageTheme() { return STAGE_THEMES[getStageIdx()] || STAGE_THEMES[2]; }
+
 const LEVELS = [
+    // ===== STAGE 1: 廃墟の地下 =====
     {
-        name:'廃墟の地下',
+        name:'廃墟の地下', stage:0,
         bg1:'#000000', bg2:'#0d0010',
         width:60,
         enemySpawns: [
@@ -876,51 +1055,41 @@ const LEVELS = [
         ],
         generate(w) {
             const m = blank(w, ROWS);
-            fillRow(m, ROWS-1, 0, w,   1);
-            fillRow(m, ROWS-2, 0, w,   1);
-            // 穴
+            fillRow(m, ROWS-1, 0, w, 1); fillRow(m, ROWS-2, 0, w, 1);
             for (const [s,l] of [[10,3],[22,4],[36,3],[46,3]]) clearCols(m,s,l,ROWS-2,ROWS);
-            // 浮遊床
             platf(m, [[7,ROWS-5,4],[14,ROWS-6,3],[23,ROWS-5,4],[29,ROWS-4,3],[38,ROWS-5,3],[43,ROWS-6,4],[52,ROWS-5,3]]);
-            // 階段（ゴール手前まで）
             for (let i=0;i<4;i++) for(let j=0;j<=i;j++) set(m,52+i,ROWS-3-j,2);
-            // ゴール台座（階段の先に平らな場所）
             platf(m, [[56, ROWS-6, 3]]);
             setGoal(m, 57, ROWS-7);
             return m;
         }
     },
     {
-        name:'呪われた塔',
+        name:'呪われた塔', stage:0,
         bg1:'#050008', bg2:'#10001a',
         width:75,
         enemySpawns: [
-            {type:'zombie', col:8,  row:ROWS-3},{type:'zombie',col:12,row:ROWS-3},
-            {type:'shade',  col:18, row:ROWS-7},{type:'shade', col:25,row:ROWS-8},
+            {type:'zombie', col:8, row:ROWS-3},{type:'zombie',col:12,row:ROWS-3},
+            {type:'shade', col:18, row:ROWS-7},{type:'shade', col:25,row:ROWS-8},
             {type:'zombie', col:32, row:ROWS-3},{type:'demon', col:40,row:ROWS-3},
-            {type:'shade',  col:48, row:ROWS-6},{type:'spawner',col:55,row:ROWS-3},
-            {type:'demon',  col:65, row:ROWS-3},{type:'shade', col:60,row:ROWS-7},
+            {type:'shade', col:48, row:ROWS-6},{type:'spawner',col:55,row:ROWS-3},
+            {type:'demon', col:65, row:ROWS-3},{type:'shade', col:60,row:ROWS-7},
         ],
         generate(w) {
             const m = blank(w, ROWS);
-            fillRow(m, ROWS-1, 0, w, 1);
-            fillRow(m, ROWS-2, 0, w, 1);
+            fillRow(m, ROWS-1, 0, w, 1); fillRow(m, ROWS-2, 0, w, 1);
             for (const [s,l] of [[8,4],[20,5],[34,4],[50,5],[62,3]]) clearCols(m,s,l,ROWS-2,ROWS);
-            platf(m,[
-                [5,ROWS-5,3],[10,ROWS-7,3],[16,ROWS-5,4],[23,ROWS-8,3],[28,ROWS-5,4],
-                [35,ROWS-6,2],[40,ROWS-4,3],[45,ROWS-7,3],[51,ROWS-5,4],[58,ROWS-6,3],[65,ROWS-4,4]
-            ]);
-            // 縦の柱
+            platf(m,[[5,ROWS-5,3],[10,ROWS-7,3],[16,ROWS-5,4],[23,ROWS-8,3],[28,ROWS-5,4],
+                [35,ROWS-6,2],[40,ROWS-4,3],[45,ROWS-7,3],[51,ROWS-5,4],[58,ROWS-6,3],[65,ROWS-4,4]]);
             for (let j=0;j<5;j++) set(m,30,ROWS-3-j,2);
             for (let j=0;j<4;j++) set(m,52,ROWS-3-j,2);
-            // ゴール台座（最後のプラットフォームの先）
             platf(m, [[w-5, ROWS-4, 3]]);
             setGoal(m, w-4, ROWS-5);
             return m;
         }
     },
     {
-        name:'奈落の深淵',
+        name:'奈落の深淵', stage:0,
         bg1:'#000005', bg2:'#080014',
         width:80,
         enemySpawns: [
@@ -933,25 +1102,210 @@ const LEVELS = [
         ],
         generate(w) {
             const m = blank(w, ROWS);
-            // 地面（途切れ途切れ）
             fillRow(m, ROWS-1, 0, 10, 1); fillRow(m, ROWS-2, 0, 10, 1);
             fillRow(m, ROWS-1, 16, 32, 1); fillRow(m, ROWS-2, 16, 32, 1);
             fillRow(m, ROWS-1, 38, 54, 1); fillRow(m, ROWS-2, 38, 54, 1);
             fillRow(m, ROWS-1, 60, w, 1); fillRow(m, ROWS-2, 60, w, 1);
-            // 穴の上に足場
-            platf(m,[
-                [11,ROWS-4,3],[14,ROWS-6,2],
-                [33,ROWS-5,3],[36,ROWS-7,2],
-                [55,ROWS-4,3],[58,ROWS-6,2],
-            ]);
-            // 高台
-            platf(m,[
-                [8,ROWS-5,3],[22,ROWS-5,4],[30,ROWS-7,3],
-                [44,ROWS-5,3],[52,ROWS-6,3],[65,ROWS-5,4],
-            ]);
-            // ゴール台座（最終地点）
+            platf(m,[[11,ROWS-4,3],[14,ROWS-6,2],[33,ROWS-5,3],[36,ROWS-7,2],[55,ROWS-4,3],[58,ROWS-6,2]]);
+            platf(m,[[8,ROWS-5,3],[22,ROWS-5,4],[30,ROWS-7,3],[44,ROWS-5,3],[52,ROWS-6,3],[65,ROWS-5,4]]);
             platf(m, [[w-5, ROWS-4, 3]]);
             setGoal(m, w-4, ROWS-5);
+            return m;
+        }
+    },
+    {
+        name:'骸骨王の間', stage:0, boss:1,
+        bg1:'#0a0500', bg2:'#1a0a00',
+        width:30,
+        enemySpawns: [{type:'boss1', col:18, row:ROWS-3}],
+        generate(w) {
+            const m = blank(w, ROWS);
+            fillRow(m, ROWS-1, 0, w, 1); fillRow(m, ROWS-2, 0, w, 1);
+            platf(m,[[4,ROWS-5,3],[12,ROWS-6,3],[20,ROWS-5,3],[w-6,ROWS-6,3]]);
+            setGoal(m, w-3, ROWS-3);
+            return m;
+        }
+    },
+    // ===== STAGE 2: 氷の洞窟 =====
+    {
+        name:'凍てつく入口', stage:1,
+        bg1:'#000510', bg2:'#001020',
+        width:65,
+        enemySpawns: [
+            {type:'zombie',col:10,row:ROWS-3},{type:'zombie',col:18,row:ROWS-3},
+            {type:'shade',col:24,row:ROWS-6},{type:'demon',col:32,row:ROWS-3},
+            {type:'shade',col:38,row:ROWS-7},{type:'zombie',col:44,row:ROWS-3},
+            {type:'spawner',col:50,row:ROWS-3},{type:'demon',col:56,row:ROWS-3},
+            {type:'shade',col:42,row:ROWS-8},{type:'shade',col:52,row:ROWS-6},
+        ],
+        generate(w) {
+            const m = blank(w, ROWS);
+            fillRow(m, ROWS-1, 0, w, 1); fillRow(m, ROWS-2, 0, w, 1);
+            for (const [s,l] of [[12,3],[26,4],[40,3],[52,3]]) clearCols(m,s,l,ROWS-2,ROWS);
+            platf(m,[[6,ROWS-5,4],[13,ROWS-6,3],[20,ROWS-4,3],[27,ROWS-7,4],[34,ROWS-5,3],
+                [41,ROWS-6,3],[48,ROWS-4,4],[55,ROWS-5,3],[60,ROWS-6,3]]);
+            platf(m, [[w-5, ROWS-4, 3]]);
+            setGoal(m, w-4, ROWS-5);
+            return m;
+        }
+    },
+    {
+        name:'氷柱の回廊', stage:1,
+        bg1:'#000818', bg2:'#001228',
+        width:80,
+        enemySpawns: [
+            {type:'zombie',col:8,row:ROWS-3},{type:'shade',col:14,row:ROWS-7},
+            {type:'demon',col:22,row:ROWS-3},{type:'shade',col:28,row:ROWS-8},
+            {type:'spawner',col:36,row:ROWS-3},{type:'zombie',col:42,row:ROWS-3},
+            {type:'demon',col:50,row:ROWS-3},{type:'shade',col:56,row:ROWS-6},
+            {type:'spawner',col:62,row:ROWS-3},{type:'demon',col:70,row:ROWS-3},
+            {type:'shade',col:66,row:ROWS-8},{type:'shade',col:74,row:ROWS-7},
+        ],
+        generate(w) {
+            const m = blank(w, ROWS);
+            fillRow(m, ROWS-1, 0, w, 1); fillRow(m, ROWS-2, 0, w, 1);
+            for (const [s,l] of [[10,4],[24,5],[38,4],[54,4],[66,3]]) clearCols(m,s,l,ROWS-2,ROWS);
+            // 氷柱（縦壁）
+            for (let j=0;j<6;j++) set(m,20,ROWS-3-j,2);
+            for (let j=0;j<5;j++) set(m,40,ROWS-3-j,2);
+            for (let j=0;j<7;j++) set(m,60,ROWS-3-j,2);
+            platf(m,[[5,ROWS-5,3],[11,ROWS-7,3],[16,ROWS-5,4],[25,ROWS-6,3],[30,ROWS-4,3],
+                [35,ROWS-7,3],[42,ROWS-5,4],[48,ROWS-6,3],[55,ROWS-5,3],[62,ROWS-7,3],[68,ROWS-5,4],[74,ROWS-4,3]]);
+            platf(m, [[w-5, ROWS-4, 3]]);
+            setGoal(m, w-4, ROWS-5);
+            return m;
+        }
+    },
+    {
+        name:'氷結の大穴', stage:1,
+        bg1:'#001020', bg2:'#002040',
+        width:85,
+        enemySpawns: [
+            {type:'zombie',col:6,row:ROWS-3},{type:'demon',col:14,row:ROWS-3},
+            {type:'shade',col:20,row:ROWS-7},{type:'spawner',col:28,row:ROWS-3},
+            {type:'shade',col:34,row:ROWS-8},{type:'demon',col:42,row:ROWS-3},
+            {type:'zombie',col:48,row:ROWS-3},{type:'shade',col:54,row:ROWS-6},
+            {type:'demon',col:62,row:ROWS-3},{type:'spawner',col:68,row:ROWS-3},
+            {type:'shade',col:74,row:ROWS-7},{type:'demon',col:78,row:ROWS-3},
+        ],
+        generate(w) {
+            const m = blank(w, ROWS);
+            fillRow(m, ROWS-1, 0, 8, 1); fillRow(m, ROWS-2, 0, 8, 1);
+            fillRow(m, ROWS-1, 14, 30, 1); fillRow(m, ROWS-2, 14, 30, 1);
+            fillRow(m, ROWS-1, 36, 52, 1); fillRow(m, ROWS-2, 36, 52, 1);
+            fillRow(m, ROWS-1, 58, w, 1); fillRow(m, ROWS-2, 58, w, 1);
+            platf(m,[[9,ROWS-4,3],[12,ROWS-6,2],[31,ROWS-5,3],[34,ROWS-7,2],[53,ROWS-4,3],[56,ROWS-6,2]]);
+            platf(m,[[18,ROWS-5,4],[24,ROWS-7,3],[40,ROWS-5,3],[46,ROWS-6,4],[64,ROWS-5,4],[72,ROWS-6,3]]);
+            platf(m, [[w-5, ROWS-4, 3]]);
+            setGoal(m, w-4, ROWS-5);
+            return m;
+        }
+    },
+    {
+        name:'氷龍の巣', stage:1, boss:2,
+        bg1:'#001030', bg2:'#002050',
+        width:30,
+        enemySpawns: [{type:'boss2', col:18, row:ROWS-3}],
+        generate(w) {
+            const m = blank(w, ROWS);
+            fillRow(m, ROWS-1, 0, w, 1); fillRow(m, ROWS-2, 0, w, 1);
+            platf(m,[[3,ROWS-5,3],[10,ROWS-7,4],[18,ROWS-5,3],[24,ROWS-6,3]]);
+            // 氷柱
+            for (let j=0;j<4;j++) set(m,14,ROWS-3-j,2);
+            setGoal(m, w-3, ROWS-3);
+            return m;
+        }
+    },
+    // ===== STAGE 3: 灼熱地獄 =====
+    {
+        name:'灼熱の入口', stage:2,
+        bg1:'#100000', bg2:'#200800',
+        width:70,
+        enemySpawns: [
+            {type:'demon',col:10,row:ROWS-3},{type:'shade',col:16,row:ROWS-6},
+            {type:'spawner',col:22,row:ROWS-3},{type:'demon',col:30,row:ROWS-3},
+            {type:'shade',col:36,row:ROWS-7},{type:'zombie',col:42,row:ROWS-3},
+            {type:'demon',col:48,row:ROWS-3},{type:'spawner',col:54,row:ROWS-3},
+            {type:'shade',col:58,row:ROWS-8},{type:'demon',col:64,row:ROWS-3},
+            {type:'shade',col:44,row:ROWS-6},{type:'zombie',col:60,row:ROWS-3},
+        ],
+        generate(w) {
+            const m = blank(w, ROWS);
+            fillRow(m, ROWS-1, 0, w, 1); fillRow(m, ROWS-2, 0, w, 1);
+            for (const [s,l] of [[8,3],[18,4],[32,3],[44,4],[56,3]]) clearCols(m,s,l,ROWS-2,ROWS);
+            platf(m,[[5,ROWS-5,3],[9,ROWS-7,3],[14,ROWS-5,4],[19,ROWS-6,3],[26,ROWS-4,3],
+                [33,ROWS-7,4],[39,ROWS-5,3],[45,ROWS-6,3],[50,ROWS-4,4],[57,ROWS-7,3],[63,ROWS-5,3]]);
+            platf(m, [[w-5, ROWS-4, 3]]);
+            setGoal(m, w-4, ROWS-5);
+            return m;
+        }
+    },
+    {
+        name:'溶岩の橋', stage:2,
+        bg1:'#180000', bg2:'#301000',
+        width:85,
+        enemySpawns: [
+            {type:'demon',col:8,row:ROWS-3},{type:'spawner',col:16,row:ROWS-3},
+            {type:'shade',col:22,row:ROWS-7},{type:'demon',col:28,row:ROWS-3},
+            {type:'shade',col:34,row:ROWS-8},{type:'spawner',col:40,row:ROWS-3},
+            {type:'demon',col:48,row:ROWS-3},{type:'shade',col:54,row:ROWS-6},
+            {type:'zombie',col:60,row:ROWS-3},{type:'demon',col:66,row:ROWS-3},
+            {type:'spawner',col:72,row:ROWS-3},{type:'shade',col:78,row:ROWS-7},
+        ],
+        generate(w) {
+            const m = blank(w, ROWS);
+            // 途切れ途切れの溶岩上の橋
+            fillRow(m, ROWS-1, 0, 12, 1); fillRow(m, ROWS-2, 0, 12, 1);
+            fillRow(m, ROWS-1, 18, 34, 1); fillRow(m, ROWS-2, 18, 34, 1);
+            fillRow(m, ROWS-1, 40, 56, 1); fillRow(m, ROWS-2, 40, 56, 1);
+            fillRow(m, ROWS-1, 62, w, 1); fillRow(m, ROWS-2, 62, w, 1);
+            platf(m,[[13,ROWS-4,3],[16,ROWS-6,2],[35,ROWS-5,3],[38,ROWS-7,2],[57,ROWS-4,3],[60,ROWS-6,2]]);
+            platf(m,[[6,ROWS-5,3],[24,ROWS-6,4],[30,ROWS-4,3],[46,ROWS-5,4],[52,ROWS-7,3],
+                [68,ROWS-5,3],[74,ROWS-6,4],[80,ROWS-4,3]]);
+            platf(m, [[w-5, ROWS-4, 3]]);
+            setGoal(m, w-4, ROWS-5);
+            return m;
+        }
+    },
+    {
+        name:'煉獄の階段', stage:2,
+        bg1:'#200000', bg2:'#401000',
+        width:90,
+        enemySpawns: [
+            {type:'demon',col:6,row:ROWS-3},{type:'demon',col:14,row:ROWS-3},
+            {type:'spawner',col:22,row:ROWS-3},{type:'shade',col:28,row:ROWS-7},
+            {type:'demon',col:36,row:ROWS-3},{type:'shade',col:42,row:ROWS-8},
+            {type:'spawner',col:48,row:ROWS-3},{type:'demon',col:56,row:ROWS-3},
+            {type:'shade',col:62,row:ROWS-6},{type:'demon',col:68,row:ROWS-3},
+            {type:'spawner',col:74,row:ROWS-3},{type:'demon',col:80,row:ROWS-3},
+            {type:'shade',col:84,row:ROWS-7},
+        ],
+        generate(w) {
+            const m = blank(w, ROWS);
+            fillRow(m, ROWS-1, 0, w, 1); fillRow(m, ROWS-2, 0, w, 1);
+            for (const [s,l] of [[10,4],[24,5],[40,4],[56,5],[72,3]]) clearCols(m,s,l,ROWS-2,ROWS);
+            // 階段状の配置
+            for (let i=0;i<3;i++) for(let j=0;j<=i;j++) set(m,8+i,ROWS-3-j,2);
+            for (let i=0;i<3;i++) for(let j=0;j<=i;j++) set(m,32+i,ROWS-3-j,2);
+            for (let i=0;i<4;i++) for(let j=0;j<=i;j++) set(m,60+i,ROWS-3-j,2);
+            platf(m,[[5,ROWS-5,3],[11,ROWS-7,3],[18,ROWS-5,4],[25,ROWS-8,3],[30,ROWS-5,4],
+                [37,ROWS-6,3],[44,ROWS-4,3],[50,ROWS-7,3],[57,ROWS-5,4],[65,ROWS-6,3],
+                [72,ROWS-5,3],[78,ROWS-7,4],[84,ROWS-5,3]]);
+            platf(m, [[w-5, ROWS-4, 3]]);
+            setGoal(m, w-4, ROWS-5);
+            return m;
+        }
+    },
+    {
+        name:'魔王の玉座', stage:2, boss:3,
+        bg1:'#200000', bg2:'#400800',
+        width:35,
+        enemySpawns: [{type:'boss3', col:22, row:ROWS-3}],
+        generate(w) {
+            const m = blank(w, ROWS);
+            fillRow(m, ROWS-1, 0, w, 1); fillRow(m, ROWS-2, 0, w, 1);
+            platf(m,[[4,ROWS-5,3],[10,ROWS-7,4],[18,ROWS-5,3],[24,ROWS-6,3],[w-7,ROWS-5,3]]);
+            setGoal(m, w-3, ROWS-3);
             return m;
         }
     },
@@ -969,7 +1323,7 @@ function setGoal(m,c,r){ set(m,c,r,5); }
 //  ロード
 // ============================================================
 function loadLevel(idx) {
-    if (idx >= LEVELS.length) { state=S.CLEAR; return; }
+    if (idx >= LEVELS.length) { state=S.CLEAR; stopBGM(); return; }
     currentLevelIdx = idx;
     const lvl = LEVELS[idx];
     levelMap = lvl.generate(lvl.width);
@@ -981,7 +1335,6 @@ function loadLevel(idx) {
         if (levelMap[r][c]===5) {
             goal = {x:c*TILE, y:r*TILE - TILE*2, w:TILE, h:TILE*3, t:0};
             levelMap[r][c]=0;
-            // ゴールの上3マスを空ける
             for (let dr=-3; dr<0; dr++) {
                 if (r+dr>=0) set(levelMap,c,r+dr,0);
             }
@@ -994,11 +1347,32 @@ function loadLevel(idx) {
         else if (sp.type==='shade')   enemies.push(new Shade  (ex, ey));
         else if (sp.type==='demon')   enemies.push(new Demon  (ex, ey));
         else if (sp.type==='spawner') enemies.push(new Spawner(ex, ey));
+        else if (sp.type==='boss1')   enemies.push(new Boss(ex, ey, 1));
+        else if (sp.type==='boss2')   enemies.push(new Boss(ex, ey, 2));
+        else if (sp.type==='boss3')   enemies.push(new Boss(ex, ey, 3));
     }
 
     player.x=80; player.y=100; player.vx=0; player.vy=0; player.onGround=false;
     player.invincible=0;
     cameraX=0;
+
+    // 面開始時の能力をバックアップ
+    savedUpgrades = JSON.parse(JSON.stringify(player.upgrades));
+    savedWeapon = player.weapon;
+    savedHp = player.hp;
+    savedMaxHp = player.maxHp;
+
+    // 準備期間
+    readyTimer = 120; // 2秒
+    state = S.READY;
+
+    // BGM切り替え（ステージ変更時）
+    const newStage = Math.floor(idx / 4);
+    const prevStage = idx > 0 ? Math.floor((idx-1) / 4) : -1;
+    if (newStage !== prevStage || !bgmPlaying) {
+        stopBGM();
+        startBGM(newStage);
+    }
 }
 
 // ============================================================
@@ -1120,7 +1494,21 @@ function playerHit(dmg) {
     shakeAmt = 12;
     spawnParticles(player.x+player.w/2, player.y+player.h/2, '#ff0000', 10, 4);
     sfxPlayerHit();
-    if (player.hp<=0) { player.hp=0; state=S.OVER; sfxDeath(); stopBGM(); }
+    if (player.hp<=0) {
+        player.hp=0;
+        lives--;
+        sfxDeath();
+        if (lives <= 0) {
+            state=S.OVER; stopBGM();
+        } else {
+            // 面の最初に戻す（能力リセット）
+            player.upgrades = JSON.parse(JSON.stringify(savedUpgrades));
+            player.weapon = savedWeapon;
+            player.hp = savedHp;
+            player.maxHp = savedMaxHp;
+            loadLevel(currentLevelIdx);
+        }
+    }
 }
 
 // ============================================================
@@ -1181,11 +1569,11 @@ function updateBullets() {
 //  描画
 // ============================================================
 function drawBackground() {
-    const lvl = LEVELS[Math.min(currentLevelIdx, LEVELS.length-1)];
-    // ベタ塗り背景（NES風）
+    const idx = Math.min(currentLevelIdx, LEVELS.length-1);
+    const lvl = LEVELS[idx];
+    const theme = getStageTheme();
     ctx.fillStyle = lvl.bg1;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    // 下半分をわずかに明るく
     ctx.fillStyle = lvl.bg2;
     ctx.fillRect(0, canvas.height/2, canvas.width, canvas.height/2);
 
@@ -1194,11 +1582,12 @@ function drawBackground() {
         const bx = ((i*157+50)%(canvas.width+200))-100 - Math.round(cameraX*0.05)%200;
         const by = (i*113+40)%canvas.height;
         const blink = Math.floor((wave+i*7)/30)%3;
-        if (blink < 2) px(bx, by, 1, 1, blink===0 ? '#644' : '#422');
+        if (blink < 2) px(bx, by, 1, 1, blink===0 ? theme.starCol1 : theme.starCol2);
     }
 }
 
 function drawTiles() {
+    const theme = getStageTheme();
     const s0=Math.floor(cameraX/TILE), s1=s0+COLS+2;
     for (let r=0;r<levelMap.length;r++) {
         for (let c=s0;c<=s1&&c<(levelMap[r]||[]).length;c++) {
@@ -1206,31 +1595,24 @@ function drawTiles() {
             const v=levelMap[r][c]; if (!v) continue;
             const sx=Math.round(c*TILE-cameraX), sy=r*TILE;
             if (v===1) {
-                // 地面ブロック（NESレンガ風）
-                pxRect(sx, sy, TILE, TILE, '#442');
-                // レンガ模様
-                pxRect(sx, sy, TILE, 2, '#664');         // 上辺ハイライト
-                pxRect(sx, sy+TILE-2, TILE, 2, '#221');  // 下辺影
-                // 横線
-                pxRect(sx, sy+TILE/2-1, TILE, 2, '#332');
-                // 縦線（レンガずらし）
+                pxRect(sx, sy, TILE, TILE, theme.tileFg);
+                pxRect(sx, sy, TILE, 2, theme.tileHi);
+                pxRect(sx, sy+TILE-2, TILE, 2, theme.tileSh);
+                pxRect(sx, sy+TILE/2-1, TILE, 2, theme.tileSh);
                 const off = (r%2) * (TILE/2);
-                pxRect(sx+((TILE/4+off)%TILE), sy, 2, TILE/2, '#332');
-                pxRect(sx+((TILE*3/4+off)%TILE), sy+TILE/2, 2, TILE/2, '#332');
-                // 上面（空気に触れてる）
+                pxRect(sx+((TILE/4+off)%TILE), sy, 2, TILE/2, theme.tileSh);
+                pxRect(sx+((TILE*3/4+off)%TILE), sy+TILE/2, 2, TILE/2, theme.tileSh);
                 if (r>0&&levelMap[r-1][c]===0) {
-                    pxRect(sx, sy, TILE, 4, '#884');
+                    pxRect(sx, sy, TILE, 4, theme.tileHi);
                 }
             } else if (v===2) {
-                // 浮遊ブロック（？ブロック風）
-                pxRect(sx, sy, TILE, TILE, '#336');
-                pxRect(sx, sy, TILE, 2, '#558');       // 上辺
-                pxRect(sx, sy+TILE-2, TILE, 2, '#113'); // 下辺
-                pxRect(sx, sy, 2, TILE, '#558');        // 左辺
-                pxRect(sx+TILE-2, sy, 2, TILE, '#113'); // 右辺
-                // 中央にドット模様
-                pxRect(sx+TILE/2-4, sy+TILE/2-4, 8, 8, '#448');
-                px(sx+TILE/2-2, sy+TILE/2-2, 2, 2, '#66a');
+                pxRect(sx, sy, TILE, TILE, theme.tileFg2);
+                pxRect(sx, sy, TILE, 2, theme.tileHi2);
+                pxRect(sx, sy+TILE-2, TILE, 2, theme.tileSh2);
+                pxRect(sx, sy, 2, TILE, theme.tileHi2);
+                pxRect(sx+TILE-2, sy, 2, TILE, theme.tileSh2);
+                pxRect(sx+TILE/2-4, sy+TILE/2-4, 8, 8, theme.tileSh2);
+                px(sx+TILE/2-2, sy+TILE/2-2, 2, 2, theme.tileHi2);
             }
         }
     }
@@ -1348,10 +1730,13 @@ function drawHUD() {
     ctx.fillText(`脚力×${player.upgrades.moveSpeed.toFixed(1)} 跳躍×${player.upgrades.jumpPower.toFixed(1)}`, 14, 102);
 
     // レベル
-    pxRect(canvas.width/2-104,8,208,20, '#000');
+    const stg = getStageIdx() + 1;
+    const lvlInStg = (lvlIdx % 4) + 1;
+    const isBoss = !!LEVELS[lvlIdx].boss;
+    pxRect(canvas.width/2-124,8,248,20, '#000');
     ctx.fillStyle='#a4f'; ctx.font='bold 12px monospace';
     ctx.textAlign='center';
-    ctx.fillText(`STAGE ${lvlIdx+1} ${LEVELS[lvlIdx].name}`, canvas.width/2, 22);
+    ctx.fillText(`STAGE${stg}-${isBoss?'BOSS':lvlInStg} ${LEVELS[lvlIdx].name}`, canvas.width/2, 22);
     ctx.textAlign='left';
 
     // 残り敵数
@@ -1359,6 +1744,13 @@ function drawHUD() {
     pxRect(canvas.width-138,8,130,20, '#000');
     ctx.fillStyle= alive>0 ? '#f44' : '#4f4'; ctx.font='bold 12px monospace';
     ctx.fillText(`敵 ${alive}体`, canvas.width-132, 22);
+
+    // 残機
+    pxRect(canvas.width-138,32,130,20, '#000');
+    ctx.fillStyle='#fc0'; ctx.font='bold 12px monospace';
+    let lifeStr = '';
+    for (let i=0;i<lives;i++) lifeStr+='♥';
+    ctx.fillText(`残機 ${lifeStr}`, canvas.width-132, 46);
 
     // 照準線
     drawCrosshair();
@@ -1429,12 +1821,49 @@ function drawTitle() {
     ctx.fillText('WASD/矢印:移動  W/↑/Space:ジャンプ', canvas.width/2, 290);
     ctx.fillText('マウス:照準  クリック:射撃', canvas.width/2, 315);
     ctx.fillText('敵の上に乗って踏みつけも可', canvas.width/2, 340);
-    ctx.fillText('アイテムで武器強化！', canvas.width/2, 365);
+    ctx.fillText('3ステージ×4面 ボスを倒して深淵を制覇せよ', canvas.width/2, 365);
     // スタート（点滅）
     if (Math.floor(titleT/20)%2) {
         ctx.fillStyle='#fc0'; ctx.font='bold 20px monospace';
         ctx.fillText('PRESS SPACE TO START', canvas.width/2, 420);
     }
+    ctx.textAlign='left';
+}
+
+function drawReady() {
+    // 半透明オーバーレイ
+    ctx.fillStyle='rgba(0,0,0,0.5)';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.textAlign='center';
+    const stg = getStageIdx() + 1;
+    const lvlInStage = (currentLevelIdx % 4) + 1;
+    const lvl = LEVELS[currentLevelIdx];
+    const isBoss = !!lvl.boss;
+
+    // ステージ表示
+    ctx.fillStyle='#fc0'; ctx.font='bold 28px monospace';
+    ctx.fillText(`STAGE ${stg} - ${isBoss ? 'BOSS' : lvlInStage + '/3'}`, canvas.width/2, 180);
+
+    pxRect(canvas.width/2-160, 190, 320, 4, '#a80');
+
+    ctx.fillStyle='#fff'; ctx.font='bold 22px monospace';
+    ctx.fillText(lvl.name, canvas.width/2, 230);
+
+    // 残機表示
+    ctx.fillStyle='#aaa'; ctx.font='16px monospace';
+    let lifeStr = '';
+    for (let i=0;i<lives;i++) lifeStr+='♥ ';
+    ctx.fillText(`残機: ${lifeStr}`, canvas.width/2, 280);
+
+    // カウントダウン
+    const sec = Math.ceil(readyTimer / 60);
+    if (Math.floor(readyTimer/15)%2) {
+        ctx.fillStyle='#fff'; ctx.font='bold 40px monospace';
+        ctx.fillText(sec > 0 ? `${sec}` : 'GO!', canvas.width/2, 360);
+    }
+
+    ctx.fillStyle='#666'; ctx.font='12px monospace';
+    ctx.fillText('SPACE でスキップ', canvas.width/2, 420);
     ctx.textAlign='left';
 }
 
@@ -1482,13 +1911,12 @@ function drawClear() {
 // ============================================================
 function startGame() {
     score=0; currentLevelIdx=0;
-    player.hp=player.maxHp;
+    lives=5;
+    player.hp=100; player.maxHp=100;
     player.weapon='PISTOL';
     player.upgrades={multiShot:1, fireRate:1.0, bulletSize:1.0, moveSpeed:1.0, jumpPower:1.0};
     pickupTexts=[]; enemyBullets=[];
-    loadLevel(0);
-    state=S.PLAY;
-    startBGM();
+    loadLevel(0); // loadLevel will set state=READY and startBGM
 }
 function resetGame() { stopBGM(); startGame(); }
 
@@ -1496,6 +1924,11 @@ function resetGame() { stopBGM(); startGame(); }
 //  メインループ
 // ============================================================
 function update() {
+    if (state===S.READY) {
+        readyTimer--;
+        if (readyTimer<=0) state=S.PLAY;
+        return;
+    }
     if (state!==S.PLAY) return;
     updatePlayer();
     for (const e of enemies) if (e.alive) e.update();
@@ -1517,6 +1950,14 @@ function draw() {
     }
     if (state===S.TITLE) {
         drawTitle();
+    } else if (state===S.READY) {
+        drawBackground();
+        drawTiles();
+        drawGoal();
+        for (const e of enemies) e.draw(cameraX);
+        drawPlayer();
+        drawHUD();
+        drawReady();
     } else if (state===S.PLAY) {
         drawBackground();
         drawTiles();
