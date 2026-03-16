@@ -8,6 +8,12 @@ const canvas = document.getElementById('game');
 const ctx    = canvas.getContext('2d');
 canvas.width  = 960;
 canvas.height = 540;
+ctx.imageSmoothingEnabled = false;
+
+// 8bit ピクセル描画ヘルパー
+const PX = 2; // 1ドット=2px
+function px(x,y,w,h,c) { ctx.fillStyle=c; ctx.fillRect(Math.round(x),Math.round(y),w*PX,h*PX); }
+function pxRect(x,y,w,h,c) { ctx.fillStyle=c; ctx.fillRect(Math.round(x),Math.round(y),w,h); }
 
 // ---- 定数 ----
 const GRAVITY     = 0.20;    // ふわっとジャンプ（滞空1.5倍）
@@ -154,29 +160,18 @@ class Bullet {
         if (!this.alive) return;
         const sx = this.x - camX;
         if (sx < -60 || sx > canvas.width + 60) return;
-        // トレイル
-        for (let i = 0; i < this.trail.length; i++) {
-            const a = (i / this.trail.length) * 0.5;
+        const s = Math.max(2, this.size);
+        // トレイル（ドット）
+        for (let i = 0; i < this.trail.length; i+=2) {
+            const a = (i / this.trail.length) * 0.6;
             ctx.globalAlpha = a;
-            ctx.fillStyle = this.color;
-            const r = this.size * (i / this.trail.length) * 0.7;
-            ctx.beginPath();
-            ctx.arc(this.trail[i].x - camX, this.trail[i].y, r, 0, Math.PI*2);
-            ctx.fill();
+            px(this.trail[i].x - camX - 1, this.trail[i].y - 1, 1, 1, this.color);
         }
         ctx.globalAlpha = 1;
-        ctx.shadowBlur  = 18;
-        ctx.shadowColor = this.color;
-        ctx.fillStyle   = this.color;
-        ctx.beginPath();
-        ctx.arc(sx, this.y, this.size, 0, Math.PI*2);
-        ctx.fill();
-        // 中心白点
-        ctx.fillStyle = '#fff';
-        ctx.beginPath();
-        ctx.arc(sx, this.y, this.size * 0.35, 0, Math.PI*2);
-        ctx.fill();
-        ctx.shadowBlur = 0;
+        // 本体（四角ドット）
+        pxRect(sx - s, this.y - s, s*2, s*2, this.color);
+        // 中心ハイライト
+        pxRect(sx - 1, this.y - 1, 2, 2, '#fff');
     }
 }
 
@@ -216,39 +211,15 @@ class EnemyBullet {
         if (!this.alive) return;
         const sx = this.x - camX;
         if (sx < -40 || sx > canvas.width + 40) return;
-        const pulse = 1 + Math.sin(this.t * 0.3) * 0.3;
-        const r = this.size * pulse;
-        // 外側のグロー（大きな警告リング）
-        ctx.strokeStyle = this.color;
-        ctx.lineWidth = 2;
-        ctx.globalAlpha = 0.3 + Math.sin(this.t * 0.4) * 0.2;
-        ctx.shadowBlur = 30;
-        ctx.shadowColor = this.color;
-        ctx.beginPath();
-        ctx.arc(sx, this.y, r + 6, 0, Math.PI * 2);
-        ctx.stroke();
+        const s = Math.max(4, this.size);
+        const blink = Math.floor(this.t/4)%2;
+        // 外枠（点滅）
+        if (blink) pxRect(sx-s-2, this.y-s-2, s*2+4, s*2+4, this.color);
         // 本体
-        ctx.globalAlpha = 0.9;
-        ctx.fillStyle = this.color;
-        ctx.beginPath();
-        ctx.arc(sx, this.y, r, 0, Math.PI * 2);
-        ctx.fill();
-        // 中心の白い光
-        ctx.fillStyle = '#fff';
-        ctx.beginPath();
-        ctx.arc(sx, this.y, r * 0.4, 0, Math.PI * 2);
-        ctx.fill();
-        // 十字マーク（弾だと分かりやすく）
-        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(sx - r - 3, this.y);
-        ctx.lineTo(sx + r + 3, this.y);
-        ctx.moveTo(sx, this.y - r - 3);
-        ctx.lineTo(sx, this.y + r + 3);
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-        ctx.shadowBlur = 0;
+        pxRect(sx-s, this.y-s, s*2, s*2, blink ? '#fff' : this.color);
+        // 十字
+        pxRect(sx-s-4, this.y-1, s*2+8, 2, this.color);
+        pxRect(sx-1, this.y-s-4, 2, s*2+8, this.color);
     }
 }
 
@@ -289,10 +260,8 @@ class Particle {
     draw(camX) {
         const a = this.life / this.maxL;
         ctx.globalAlpha = a;
-        ctx.fillStyle   = this.color;
-        ctx.beginPath();
-        ctx.arc(this.x - camX, this.y, this.size * a, 0, Math.PI*2);
-        ctx.fill();
+        const s = Math.max(PX, Math.round(this.size * a / PX) * PX);
+        pxRect(this.x - camX - s/2, this.y - s/2, s, s, this.color);
         ctx.globalAlpha = 1;
     }
 }
@@ -330,20 +299,20 @@ class Item {
         const sx = this.x - camX;
         if (sx < -40 || sx > canvas.width+40) return;
         const d = ITEM_DEFS[this.type];
-        const hover = Math.sin(this.t)*5;
-        ctx.shadowBlur  = 20;
-        ctx.shadowColor = d.color;
-        ctx.strokeStyle = d.color;
-        ctx.fillStyle   = 'rgba(0,0,0,0.85)';
-        ctx.lineWidth   = 2;
-        ctx.fillRect  (sx - 15, this.y - 15 + hover, 30, 30);
-        ctx.strokeRect(sx - 15, this.y - 15 + hover, 30, 30);
-        ctx.fillStyle   = d.color;
-        ctx.font        = 'bold 14px monospace';
-        ctx.textAlign   = 'center';
+        const hover = Math.round(Math.sin(this.t)*4);
+        const bx = Math.round(sx-12), by = Math.round(this.y-12+hover);
+        // 箱（黒背景+色枠）
+        pxRect(bx, by, 24, 24, '#000');
+        pxRect(bx, by, 24, 2, d.color);
+        pxRect(bx, by+22, 24, 2, d.color);
+        pxRect(bx, by, 2, 24, d.color);
+        pxRect(bx+22, by, 2, 24, d.color);
+        // アイコン（ピクセルフォント）
+        ctx.fillStyle = d.color;
+        ctx.font = 'bold 14px monospace';
+        ctx.textAlign = 'center';
         ctx.fillText(d.icon, sx, this.y + 5 + hover);
-        ctx.textAlign   = 'left';
-        ctx.shadowBlur  = 0;
+        ctx.textAlign = 'left';
     }
     applyTo() {
         const t = this.type;
@@ -432,12 +401,11 @@ class Enemy {
         if (this.y > canvas.height + 100) this.die();
     }
     _drawHpBar(camX) {
-        const sx = this.x - camX;
+        const sx = Math.round(this.x - camX);
         const bw = this.w;
-        ctx.fillStyle = '#330000';
-        ctx.fillRect(sx, this.y - 8, bw, 4);
-        ctx.fillStyle = '#cc0000';
-        ctx.fillRect(sx, this.y - 8, bw * (this.hp/this.maxHp), 4);
+        pxRect(sx-1, this.y-9, bw+2, 6, '#000');
+        pxRect(sx, this.y-8, bw, 4, '#300');
+        pxRect(sx, this.y-8, Math.round(bw*(this.hp/this.maxHp)), 4, '#e00');
     }
 }
 
@@ -468,20 +436,28 @@ class Zombie extends Enemy {
     }
     draw(camX) {
         if (!this.alive) return;
-        const sx = this.x - camX;
-        const bob = Math.sin(this.t*0.12)*2;
-        ctx.shadowBlur = 8; ctx.shadowColor = '#660000';
-        // 体
-        ctx.fillStyle = '#1a0505';
-        ctx.fillRect(sx, this.y + bob, this.w, this.h);
-        // 目
-        ctx.fillStyle = '#ff2200';
-        ctx.shadowBlur = 12; ctx.shadowColor = '#ff2200';
-        ctx.beginPath();
-        ctx.arc(sx+8, this.y+10+bob, 4, 0, Math.PI*2); ctx.fill();
-        ctx.beginPath();
-        ctx.arc(sx+22, this.y+10+bob, 4, 0, Math.PI*2); ctx.fill();
-        ctx.shadowBlur = 0;
+        const sx = Math.round(this.x - camX);
+        const sy = Math.round(this.y);
+        const bob = Math.round(Math.sin(this.t*0.12)*2);
+        const y = sy + bob;
+        // 体（ピクセルゾンビ）
+        pxRect(sx+4, y, 22, 4, '#2a4a0a');       // 頭
+        pxRect(sx+2, y+4, 26, 4, '#1a3a06');      // 頭下
+        px(sx+6, y+2, 3, 2, '#f00');               // 左目
+        px(sx+18, y+2, 3, 2, '#f00');              // 右目
+        pxRect(sx+8, y+8, 14, 4, '#1a3a06');       // 首
+        pxRect(sx+2, y+12, 26, 16, '#143006');     // 胴体
+        pxRect(sx, y+14, 4, 12, '#143006');        // 左腕
+        pxRect(sx+26, y+14, 4, 12, '#143006');     // 右腕
+        // 脚（歩行アニメ）
+        const walk = Math.floor(this.t/8)%2;
+        if (walk) {
+            pxRect(sx+4, y+28, 8, 12, '#0e200a');
+            pxRect(sx+16, y+28, 8, 8, '#0e200a');
+        } else {
+            pxRect(sx+4, y+28, 8, 8, '#0e200a');
+            pxRect(sx+16, y+28, 8, 12, '#0e200a');
+        }
         this._drawHpBar(camX);
     }
 }
@@ -580,28 +556,25 @@ class Shade extends Enemy {
     }
     draw(camX) {
         if (!this.alive) return;
-        const sx = this.x + this.w/2 - camX;
-        const sy = this.y + this.h/2;
-        ctx.save();
-        ctx.translate(sx, sy);
-        ctx.rotate(this.angle);
+        const sx = Math.round(this.x - camX);
+        const sy = Math.round(this.y);
         const diving = this.mode === 'dive';
-        ctx.shadowBlur = diving ? 22 : 14;
-        ctx.shadowColor = diving ? '#ff4400' : '#4400cc';
-        ctx.fillStyle = diving ? '#220008' : '#0d0022';
-        // 菱形
-        ctx.beginPath();
-        ctx.moveTo(18,0); ctx.lineTo(0,-10); ctx.lineTo(-10,0); ctx.lineTo(0,10);
-        ctx.closePath(); ctx.fill();
-        ctx.strokeStyle = diving ? '#ff4400' : '#6600ff'; ctx.lineWidth = 1.5;
-        ctx.stroke();
+        const c1 = diving ? '#a02' : '#40c';
+        const c2 = diving ? '#f60' : '#80f';
+        const flap = Math.floor(this.t/6)%2;
+        // 体（コウモリ風ピクセル）
+        pxRect(sx+8, sy+6, 10, 10, c1);           // 胴体
+        // 翼
+        if (flap) {
+            pxRect(sx, sy+4, 8, 6, c1);           // 左翼上
+            pxRect(sx+18, sy+4, 8, 6, c1);        // 右翼上
+        } else {
+            pxRect(sx, sy+10, 8, 6, c1);          // 左翼下
+            pxRect(sx+18, sy+10, 8, 6, c1);       // 右翼下
+        }
         // 目
-        ctx.fillStyle = diving ? '#ff6600' : '#aa00ff';
-        ctx.shadowBlur = 10; ctx.shadowColor = diving ? '#ff6600' : '#aa00ff';
-        ctx.beginPath();
-        ctx.arc(6, -2, 3, 0, Math.PI*2); ctx.fill();
-        ctx.shadowBlur = 0;
-        ctx.restore();
+        px(sx+9, sy+8, 2, 2, c2);
+        px(sx+14, sy+8, 2, 2, c2);
         this._drawHpBar(camX);
     }
 }
@@ -635,38 +608,36 @@ class Demon extends Enemy {
     }
     draw(camX) {
         if (!this.alive) return;
-        const sx = this.x - camX;
-        const bob = Math.sin(this.t*0.08)*3;
-        ctx.shadowBlur = 16; ctx.shadowColor = '#ff0000';
-        // 体
-        ctx.fillStyle = '#1a0000';
-        ctx.fillRect(sx, this.y+bob, this.w, this.h);
+        const sx = Math.round(this.x - camX);
+        const sy = Math.round(this.y);
+        const bob = Math.round(Math.sin(this.t*0.08)*2);
+        const y = sy + bob;
         // 角
-        ctx.fillStyle = '#330000';
-        ctx.beginPath();
-        ctx.moveTo(sx+8, this.y+bob); ctx.lineTo(sx, this.y-14+bob); ctx.lineTo(sx+16, this.y+bob);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.moveTo(sx+this.w-8, this.y+bob); ctx.lineTo(sx+this.w, this.y-14+bob); ctx.lineTo(sx+this.w-16, this.y+bob);
-        ctx.fill();
-        // 目
-        ctx.fillStyle = '#ff3300';
-        ctx.shadowBlur = 20; ctx.shadowColor = '#ff3300';
-        ctx.beginPath();
-        ctx.arc(sx+14, this.y+16+bob, 6, 0, Math.PI*2); ctx.fill();
-        ctx.beginPath();
-        ctx.arc(sx+34, this.y+16+bob, 6, 0, Math.PI*2); ctx.fill();
-        // 牙
-        ctx.fillStyle = '#ccc';
-        ctx.shadowBlur = 0;
-        for (let i=0;i<4;i++) {
-            ctx.beginPath();
-            ctx.moveTo(sx+8+i*9, this.y+this.h+bob);
-            ctx.lineTo(sx+12+i*9, this.y+this.h+10+bob);
-            ctx.lineTo(sx+16+i*9, this.y+this.h+bob);
-            ctx.fill();
+        pxRect(sx+2, y-8, 6, 8, '#800');
+        pxRect(sx+40, y-8, 6, 8, '#800');
+        // 頭
+        pxRect(sx+4, y, 40, 12, '#400');
+        // 目（点滅）
+        const blink = Math.floor(this.t/30)%8!==0;
+        if (blink) {
+            pxRect(sx+10, y+4, 8, 6, '#f30');
+            pxRect(sx+30, y+4, 8, 6, '#f30');
+            px(sx+12, y+5, 2, 2, '#ff0');
+            px(sx+32, y+5, 2, 2, '#ff0');
         }
-        ctx.shadowBlur = 0;
+        // 胴体
+        pxRect(sx+2, y+12, 44, 28, '#300');
+        pxRect(sx+6, y+14, 36, 24, '#400');
+        // 腕
+        pxRect(sx-4, y+16, 8, 20, '#300');
+        pxRect(sx+44, y+16, 8, 20, '#300');
+        // 牙
+        for (let i=0;i<3;i++) {
+            pxRect(sx+10+i*12, y+40, 4, 8, '#ccc');
+        }
+        // 脚
+        pxRect(sx+6, y+40, 12, 16, '#200');
+        pxRect(sx+30, y+40, 12, 16, '#200');
         this._drawHpBar(camX);
     }
 }
@@ -693,22 +664,20 @@ class Spawner extends Enemy {
     }
     draw(camX) {
         if (!this.alive) return;
-        const sx = this.x - camX;
-        const pulse = Math.sin(this.t*0.1)*4;
-        ctx.shadowBlur = 18; ctx.shadowColor = '#aa00ff';
-        ctx.strokeStyle = '#880055';
-        ctx.fillStyle   = '#0d000d';
-        ctx.lineWidth   = 2;
-        ctx.beginPath();
-        ctx.arc(sx+18, this.y+18, 18+pulse, 0, Math.PI*2);
-        ctx.fill(); ctx.stroke();
-        // 内側の記号
-        ctx.fillStyle = '#cc00aa';
-        ctx.font = 'bold 18px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText('✦', sx+18, this.y+24);
-        ctx.textAlign = 'left';
-        ctx.shadowBlur = 0;
+        const sx = Math.round(this.x - camX);
+        const sy = Math.round(this.y);
+        const pulse = Math.floor(this.t/8)%2;
+        // 外枠
+        pxRect(sx+2, sy+2, 32, 32, '#202');
+        pxRect(sx+4, sy+4, 28, 28, pulse ? '#306' : '#204');
+        // 中央の核
+        pxRect(sx+12, sy+12, 12, 12, '#c0a');
+        pxRect(sx+14, sy+14, 8, 8, '#f0f');
+        // 角のドット装飾
+        px(sx+4, sy+4, 2, 2, '#f0f');
+        px(sx+28, sy+4, 2, 2, '#f0f');
+        px(sx+4, sy+28, 2, 2, '#f0f');
+        px(sx+28, sy+28, 2, 2, '#f0f');
         this._drawHpBar(camX);
     }
 }
@@ -1049,32 +1018,21 @@ function updateBullets() {
 //  描画
 // ============================================================
 function drawBackground() {
-    const lvl = LEVELS[currentLevelIdx];
-    const g = ctx.createLinearGradient(0,0,0,canvas.height);
-    g.addColorStop(0, lvl.bg1);
-    g.addColorStop(1, lvl.bg2);
-    ctx.fillStyle=g;
-    ctx.fillRect(0,0,canvas.width,canvas.height);
+    const lvl = LEVELS[Math.min(currentLevelIdx, LEVELS.length-1)];
+    // ベタ塗り背景（NES風）
+    ctx.fillStyle = lvl.bg1;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // 下半分をわずかに明るく
+    ctx.fillStyle = lvl.bg2;
+    ctx.fillRect(0, canvas.height/2, canvas.width, canvas.height/2);
 
-    // 遠景霧
-    ctx.fillStyle='rgba(60,0,80,0.06)';
-    for (let i=0;i<6;i++) {
-        const ox=(cameraX*0.15+i*200)%(canvas.width+400)-200;
-        ctx.beginPath();
-        ctx.ellipse(ox, canvas.height-60, 120, 50, 0, 0, Math.PI*2);
-        ctx.fill();
+    // 星（8bitドット）
+    for (let i=0;i<16;i++) {
+        const bx = ((i*157+50)%(canvas.width+200))-100 - Math.round(cameraX*0.05)%200;
+        const by = (i*113+40)%canvas.height;
+        const blink = Math.floor((wave+i*7)/30)%3;
+        if (blink < 2) px(bx, by, 1, 1, blink===0 ? '#644' : '#422');
     }
-
-    // 背景の瞳
-    ctx.fillStyle='rgba(120,0,0,0.15)';
-    ctx.shadowBlur=20; ctx.shadowColor='#440000';
-    for (let i=0;i<12;i++) {
-        const bx=((i*157+50)%(canvas.width+300))-150 - cameraX*0.05%300;
-        const by=(i*113+40)%canvas.height;
-        ctx.beginPath();
-        ctx.arc(bx,by,2.5,0,Math.PI*2); ctx.fill();
-    }
-    ctx.shadowBlur=0;
 }
 
 function drawTiles() {
@@ -1083,22 +1041,33 @@ function drawTiles() {
         for (let c=s0;c<=s1&&c<(levelMap[r]||[]).length;c++) {
             if (c<0) continue;
             const v=levelMap[r][c]; if (!v) continue;
-            const sx=c*TILE-cameraX, sy=r*TILE;
+            const sx=Math.round(c*TILE-cameraX), sy=r*TILE;
             if (v===1) {
-                ctx.fillStyle='#0a0012'; ctx.fillRect(sx,sy,TILE,TILE);
-                ctx.fillStyle='#1a0028'; ctx.fillRect(sx+1,sy+1,TILE-2,TILE-2);
+                // 地面ブロック（NESレンガ風）
+                pxRect(sx, sy, TILE, TILE, '#442');
+                // レンガ模様
+                pxRect(sx, sy, TILE, 2, '#664');         // 上辺ハイライト
+                pxRect(sx, sy+TILE-2, TILE, 2, '#221');  // 下辺影
+                // 横線
+                pxRect(sx, sy+TILE/2-1, TILE, 2, '#332');
+                // 縦線（レンガずらし）
+                const off = (r%2) * (TILE/2);
+                pxRect(sx+((TILE/4+off)%TILE), sy, 2, TILE/2, '#332');
+                pxRect(sx+((TILE*3/4+off)%TILE), sy+TILE/2, 2, TILE/2, '#332');
+                // 上面（空気に触れてる）
                 if (r>0&&levelMap[r-1][c]===0) {
-                    // 上面に赤いライン
-                    ctx.fillStyle='#550022'; ctx.fillRect(sx,sy,TILE,3);
-                    ctx.shadowBlur=6; ctx.shadowColor='#aa0044';
-                    ctx.fillStyle='#330011'; ctx.fillRect(sx,sy,TILE,2);
-                    ctx.shadowBlur=0;
+                    pxRect(sx, sy, TILE, 4, '#884');
                 }
             } else if (v===2) {
-                ctx.fillStyle='#080010'; ctx.fillRect(sx,sy,TILE,TILE);
-                ctx.fillStyle='#120018'; ctx.fillRect(sx+2,sy+2,TILE-4,TILE-4);
-                ctx.strokeStyle='#220033'; ctx.lineWidth=1;
-                ctx.strokeRect(sx+1,sy+1,TILE-2,TILE-2);
+                // 浮遊ブロック（？ブロック風）
+                pxRect(sx, sy, TILE, TILE, '#336');
+                pxRect(sx, sy, TILE, 2, '#558');       // 上辺
+                pxRect(sx, sy+TILE-2, TILE, 2, '#113'); // 下辺
+                pxRect(sx, sy, 2, TILE, '#558');        // 左辺
+                pxRect(sx+TILE-2, sy, 2, TILE, '#113'); // 右辺
+                // 中央にドット模様
+                pxRect(sx+TILE/2-4, sy+TILE/2-4, 8, 8, '#448');
+                px(sx+TILE/2-2, sy+TILE/2-2, 2, 2, '#66a');
             }
         }
     }
@@ -1107,161 +1076,141 @@ function drawTiles() {
 function drawGoal() {
     if (!goal) return;
     goal.t += 0.03;
-    const sx = goal.x - cameraX;
+    const sx = Math.round(goal.x - cameraX);
     if (sx < -60 || sx > canvas.width+60) return;
     const alive = enemies.filter(e=>e.alive).length;
     const unlocked = alive === 0;
-    ctx.shadowBlur=25; ctx.shadowColor= unlocked ? '#ffcc00' : '#444';
+    const blink = Math.floor(goal.t*10)%2;
     // ポール
-    ctx.fillStyle= unlocked ? '#554400' : '#222';
-    ctx.fillRect(sx+TILE/2-3, goal.y, 6, goal.h);
-    // 旗
-    const w=Math.cos(goal.t*2)*4;
-    ctx.fillStyle= unlocked ? '#cc0000' : '#440000';
-    ctx.beginPath();
-    ctx.moveTo(sx+TILE/2+3, goal.y+4);
-    ctx.lineTo(sx+TILE/2+36+w, goal.y+14);
-    ctx.lineTo(sx+TILE/2+3, goal.y+28);
-    ctx.fill();
-    // 光
+    pxRect(sx+TILE/2-2, goal.y, 4, goal.h, unlocked ? '#aa8' : '#333');
+    // 旗（ピクセル）
+    const fc = unlocked ? (blink ? '#f00' : '#c00') : '#400';
+    pxRect(sx+TILE/2+2, goal.y+4, 24, 4, fc);
+    pxRect(sx+TILE/2+2, goal.y+8, 20, 4, fc);
+    pxRect(sx+TILE/2+2, goal.y+12, 16, 4, fc);
+    // 旗の模様
     if (unlocked) {
-        ctx.fillStyle=`rgba(255,200,0,${0.2+Math.sin(goal.t*3)*0.15})`;
-        ctx.beginPath();
-        ctx.arc(sx+TILE/2, goal.y, 24, 0, Math.PI*2); ctx.fill();
-    } else {
-        // 鍵マーク表示
-        ctx.fillStyle='#aa4444';
-        ctx.shadowBlur=8; ctx.shadowColor='#aa0000';
-        ctx.font='bold 14px monospace';
+        px(sx+TILE/2+8, goal.y+6, 2, 2, '#ff0');
+        px(sx+TILE/2+14, goal.y+6, 2, 2, '#ff0');
+    }
+    // ポール先端
+    pxRect(sx+TILE/2-4, goal.y-4, 8, 6, unlocked ? '#ff0' : '#444');
+    if (!unlocked) {
+        // 残り敵数
+        ctx.fillStyle='#a44';
+        ctx.font='bold 12px monospace';
         ctx.textAlign='center';
-        ctx.fillText('🔒', sx+TILE/2, goal.y + goal.h + 18);
-        ctx.fillStyle='#884444';
-        ctx.font='10px monospace';
-        ctx.fillText(`残り${alive}体`, sx+TILE/2, goal.y + goal.h + 32);
+        ctx.fillText(`残り${alive}体`, sx+TILE/2, goal.y + goal.h + 16);
         ctx.textAlign='left';
     }
-    ctx.shadowBlur=0;
 }
 
 function drawPlayer() {
     if (player.invincible>0 && Math.floor(player.invincible/4)%2===0) return;
-    const sx = player.x - cameraX;
-    const sy = player.y;
-    ctx.save();
-    ctx.translate(sx+player.w/2, sy+player.h/2);
-    ctx.scale(player.facing, 1);
-    const bob = player.onGround ? Math.sin(player.animTimer*2)*2 : (player.vy<0?-3:2);
+    const sx = Math.round(player.x - cameraX);
+    const sy = Math.round(player.y);
+    const f = player.facing;
+    const bob = player.onGround ? Math.round(Math.sin(player.animTimer*2)*2) : (player.vy<0?-2:2);
+    const y = sy + bob;
+    const hw = player.w;
 
-    // 体（暗いシルエット）
-    ctx.shadowBlur=10; ctx.shadowColor='#220033';
-    ctx.fillStyle='#0d0011';
-    ctx.fillRect(-player.w/2, -player.h/2+bob, player.w, player.h-4);
-
-    // 外套（マント）
-    ctx.fillStyle='#0a0008';
-    ctx.beginPath();
-    ctx.moveTo(-player.w/2-4, -player.h/2+4+bob);
-    ctx.lineTo(player.w/2+4,  -player.h/2+4+bob);
-    ctx.lineTo(player.w/2+8,   player.h/2+bob);
-    ctx.lineTo(-player.w/2-8,  player.h/2+bob);
-    ctx.closePath(); ctx.fill();
-
-    // 光る目
-    ctx.shadowBlur=16; ctx.shadowColor='#ff2200';
-    ctx.fillStyle='#ff2200';
-    ctx.beginPath();
-    ctx.arc(6, -player.h/2+8+bob, 4, 0, Math.PI*2); ctx.fill();
-    ctx.shadowBlur=0;
-
-    // 銃の向き（マウスへ）
-    const mx = mouse.x + cameraX;
-    const my = mouse.y;
-    const gunAngle = Math.atan2(my-(sy+player.h/2), mx-(sx+player.w/2)) * player.facing;
-    ctx.rotate(gunAngle);
+    // マント
+    pxRect(sx-2, y+8, hw+4, 30, '#112');
+    // 体
+    pxRect(sx+4, y+4, hw-8, 32, '#223');
+    // 頭
+    pxRect(sx+4, y, hw-8, 12, '#113');
+    // ヘルメット/フード
+    pxRect(sx+2, y-2, hw-4, 6, '#224');
+    // 目（向き依存）
+    if (f > 0) {
+        px(sx+16, y+4, 3, 3, '#f22');
+    } else {
+        px(sx+5, y+4, 3, 3, '#f22');
+    }
+    // 脚（歩行アニメ）
+    const walk = Math.floor(player.animTimer*2)%2;
+    if (player.onGround && Math.abs(player.vx)>0.5) {
+        if (walk) {
+            pxRect(sx+4, y+34, 8, 8, '#112');
+            pxRect(sx+14, y+34, 8, 6, '#112');
+        } else {
+            pxRect(sx+4, y+34, 8, 6, '#112');
+            pxRect(sx+14, y+34, 8, 8, '#112');
+        }
+    } else {
+        pxRect(sx+4, y+34, 8, 6, '#112');
+        pxRect(sx+14, y+34, 8, 6, '#112');
+    }
+    // 銃（向き依存）
     const W = WEAPONS[player.weapon];
-    ctx.shadowBlur=10; ctx.shadowColor=W.color;
-    ctx.fillStyle=W.color;
-    ctx.fillRect(8, -3, 18, 6);
-    ctx.fillStyle='#222';
-    ctx.fillRect(8, -2, 16, 4);
-    ctx.shadowBlur=0;
-
-    ctx.restore();
+    if (f > 0) {
+        pxRect(sx+hw-2, y+14, 14, 4, W.color);
+        pxRect(sx+hw, y+15, 10, 2, '#333');
+    } else {
+        pxRect(sx-12, y+14, 14, 4, W.color);
+        pxRect(sx-10, y+15, 10, 2, '#333');
+    }
 }
 
 function drawHUD() {
-    // HP バー
-    ctx.fillStyle='rgba(0,0,0,0.6)';
-    ctx.fillRect(10,10,204,18);
+    const lvlIdx = Math.min(currentLevelIdx, LEVELS.length-1);
+    // HP バー（NES風）
+    pxRect(8,8,208,20, '#000');
     const hpRatio = player.hp/player.maxHp;
-    const hpColor = hpRatio>0.5?'#cc0000': hpRatio>0.25?'#ff4400':'#ff0000';
-    ctx.shadowBlur=8; ctx.shadowColor=hpColor;
-    ctx.fillStyle=hpColor;
-    ctx.fillRect(12,12,200*hpRatio,14);
-    ctx.shadowBlur=0;
-    ctx.strokeStyle='#440022'; ctx.lineWidth=1;
-    ctx.strokeRect(10,10,204,18);
-    ctx.fillStyle='#aaa'; ctx.font='11px monospace';
-    ctx.fillText(`HP: ${player.hp|0}/${player.maxHp}`,14,23);
+    const hpColor = hpRatio>0.5?'#c00': hpRatio>0.25?'#f40':'#f00';
+    pxRect(10,10,204,16, '#200');
+    pxRect(10,10,Math.round(204*hpRatio),16, hpColor);
+    pxRect(10,10,204,2, '#f44');  // ハイライト
+    ctx.fillStyle='#fff'; ctx.font='bold 12px monospace';
+    ctx.fillText(`HP ${player.hp|0}/${player.maxHp}`,14,23);
 
     // スコア
-    ctx.fillStyle='rgba(0,0,0,0.6)';
-    ctx.fillRect(10,34,150,20);
-    ctx.fillStyle='#cc8800'; ctx.font='bold 13px monospace';
-    ctx.shadowBlur=6; ctx.shadowColor='#cc8800';
-    ctx.fillText(`SCORE: ${score}`, 15, 49);
-    ctx.shadowBlur=0;
+    pxRect(8,32,154,18, '#000');
+    ctx.fillStyle='#fc0'; ctx.font='bold 12px monospace';
+    ctx.fillText(`SCORE ${score}`, 12, 46);
 
     // 武器
     const W = WEAPONS[player.weapon];
-    ctx.fillStyle='rgba(0,0,0,0.7)';
-    ctx.fillRect(10,60,220,62);
-    ctx.shadowBlur=10; ctx.shadowColor=W.color;
-    ctx.strokeStyle=W.color; ctx.lineWidth=1;
-    ctx.strokeRect(10,60,220,62);
-    ctx.fillStyle=W.color; ctx.font='bold 13px monospace';
-    ctx.fillText(`武器: ${W.name}`, 15, 77);
-    ctx.fillStyle='#888'; ctx.font='11px monospace';
-    ctx.fillText(`弾数×${player.upgrades.multiShot}  速射×${player.upgrades.fireRate.toFixed(1)}  弾サイズ×${player.upgrades.bulletSize.toFixed(1)}`, 15, 92);
-    ctx.fillStyle='#668'; ctx.font='10px monospace';
-    ctx.fillText(`脚力×${player.upgrades.moveSpeed.toFixed(1)}  跳躍×${player.upgrades.jumpPower.toFixed(1)}`, 15, 106);
-    ctx.shadowBlur=0;
+    pxRect(8,54,224,58, '#000');
+    pxRect(10,56,220,54, '#111');
+    // 枠のドット
+    pxRect(10,56,220,2, W.color);
+    pxRect(10,108,220,2, W.color);
+    ctx.fillStyle=W.color; ctx.font='bold 12px monospace';
+    ctx.fillText(`${W.name}`, 14, 72);
+    ctx.fillStyle='#aaa'; ctx.font='11px monospace';
+    ctx.fillText(`弾×${player.upgrades.multiShot} 速射×${player.upgrades.fireRate.toFixed(1)} 弾径×${player.upgrades.bulletSize.toFixed(1)}`, 14, 88);
+    ctx.fillStyle='#88a'; ctx.font='10px monospace';
+    ctx.fillText(`脚力×${player.upgrades.moveSpeed.toFixed(1)} 跳躍×${player.upgrades.jumpPower.toFixed(1)}`, 14, 102);
 
     // レベル
-    ctx.fillStyle='rgba(0,0,0,0.6)';
-    ctx.fillRect(canvas.width/2-100,10,200,22);
-    ctx.fillStyle='#aa44ff'; ctx.font='bold 13px monospace';
+    pxRect(canvas.width/2-104,8,208,20, '#000');
+    ctx.fillStyle='#a4f'; ctx.font='bold 12px monospace';
     ctx.textAlign='center';
-    ctx.fillText(`STAGE ${currentLevelIdx+1}: ${LEVELS[currentLevelIdx].name}`, canvas.width/2, 26);
+    ctx.fillText(`STAGE ${lvlIdx+1} ${LEVELS[lvlIdx].name}`, canvas.width/2, 22);
     ctx.textAlign='left';
 
     // 残り敵数
     const alive = enemies.filter(e=>e.alive).length;
-    ctx.fillStyle='rgba(0,0,0,0.6)';
-    ctx.fillRect(canvas.width-140,10,130,22);
-    ctx.fillStyle='#ff4444'; ctx.font='13px monospace';
-    ctx.fillText(`敵: ${alive}体`, canvas.width-135, 26);
+    pxRect(canvas.width-138,8,130,20, '#000');
+    ctx.fillStyle= alive>0 ? '#f44' : '#4f4'; ctx.font='bold 12px monospace';
+    ctx.fillText(`敵 ${alive}体`, canvas.width-132, 22);
 
     // 照準線
     drawCrosshair();
 }
 
 function drawCrosshair() {
-    const mx=mouse.x, my=mouse.y;
+    const mx=Math.round(mouse.x), my=Math.round(mouse.y);
     const W=WEAPONS[player.weapon];
-    ctx.strokeStyle=W.color; ctx.lineWidth=1;
-    ctx.shadowBlur=8; ctx.shadowColor=W.color;
-    ctx.globalAlpha=0.8;
-    ctx.beginPath();
-    ctx.moveTo(mx-12,my); ctx.lineTo(mx-4,my);
-    ctx.moveTo(mx+4,my);  ctx.lineTo(mx+12,my);
-    ctx.moveTo(mx,my-12); ctx.lineTo(mx,my-4);
-    ctx.moveTo(mx,my+4);  ctx.lineTo(mx,my+12);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(mx,my,4,0,Math.PI*2);
-    ctx.stroke();
-    ctx.globalAlpha=1; ctx.shadowBlur=0;
+    // ピクセル十字照準
+    pxRect(mx-12, my-1, 8, 2, W.color);
+    pxRect(mx+4, my-1, 8, 2, W.color);
+    pxRect(mx-1, my-12, 2, 8, W.color);
+    pxRect(mx-1, my+4, 2, 8, W.color);
+    // 中心ドット
+    px(mx-1, my-1, 1, 1, '#fff');
 }
 
 // ピックアップテキスト描画
@@ -1288,79 +1237,80 @@ let titleT=0;
 function drawTitle() {
     titleT++;
     ctx.fillStyle='#000'; ctx.fillRect(0,0,canvas.width,canvas.height);
-    // 背景の揺れる瞳
-    for (let i=0;i<20;i++) {
+    // 背景の星（8bitドット）
+    for (let i=0;i<30;i++) {
         const tx=(i*137.5)%canvas.width;
         const ty=(i*97.3)%canvas.height;
-        const a=Math.sin(titleT*0.02+i)*0.3+0.15;
-        ctx.fillStyle=`rgba(200,0,0,${a})`;
-        ctx.shadowBlur=15+Math.sin(titleT*0.05)*5;
-        ctx.shadowColor='#ff0000';
-        ctx.beginPath();
-        ctx.arc(tx,ty,3,0,Math.PI*2); ctx.fill();
+        const blink = Math.floor((titleT+i*11)/20)%3;
+        if (blink<2) px(tx, ty, 1, 1, blink===0?'#844':'#422');
     }
-    ctx.shadowBlur=0;
-    // 霧
-    const g=ctx.createRadialGradient(canvas.width/2,canvas.height/2,50,canvas.width/2,canvas.height/2,350);
-    g.addColorStop(0,'rgba(40,0,60,0.4)');
-    g.addColorStop(1,'rgba(0,0,0,0.0)');
-    ctx.fillStyle=g; ctx.fillRect(0,0,canvas.width,canvas.height);
+    // 地面ライン
+    pxRect(0, 440, canvas.width, 2, '#442');
+    pxRect(0, 442, canvas.width, 98, '#221');
+    // レンガ模様
+    for (let i=0;i<canvas.width;i+=40) {
+        pxRect(i, 460, 2, 80, '#332');
+    }
     // タイトル
     ctx.textAlign='center';
-    ctx.shadowBlur=40; ctx.shadowColor='#aa00ff';
-    ctx.fillStyle='#cc00ff';
-    ctx.font='bold 72px monospace';
-    ctx.fillText('DARK ABYSS', canvas.width/2, 180);
-    ctx.shadowBlur=20; ctx.shadowColor='#ff0000';
-    ctx.fillStyle='#ff3333';
-    ctx.font='22px monospace';
-    ctx.fillText('─ 深淵を走れ ─', canvas.width/2, 225);
-    ctx.shadowBlur=0;
+    ctx.fillStyle='#c0f';
+    ctx.font='bold 64px monospace';
+    ctx.fillText('DARK ABYSS', canvas.width/2, 170);
+    // 下線
+    pxRect(canvas.width/2-200, 180, 400, 4, '#a0d');
+    ctx.fillStyle='#f44';
+    ctx.font='bold 20px monospace';
+    ctx.fillText('- 深淵を走れ -', canvas.width/2, 215);
     // 操作説明
-    ctx.fillStyle='#664466'; ctx.font='15px monospace';
-    ctx.fillText('WASD / ←→ : 移動    W/↑/Space : ジャンプ', canvas.width/2, 310);
-    ctx.fillText('マウス : 照準    クリック : 射撃', canvas.width/2, 340);
-    ctx.fillText('敵の上に乗って踏みつけることもできる', canvas.width/2, 370);
-    ctx.fillText('アイテムを拾って武器を強化しよう！', canvas.width/2, 395);
-    const blink = Math.sin(titleT*0.08)>0;
-    if (blink) {
-        ctx.shadowBlur=14; ctx.shadowColor='#ff6600';
-        ctx.fillStyle='#ff8800'; ctx.font='bold 22px monospace';
-        ctx.fillText('SPACE でゲームスタート', canvas.width/2, 455);
-        ctx.shadowBlur=0;
+    ctx.fillStyle='#888'; ctx.font='14px monospace';
+    ctx.fillText('WASD/矢印:移動  W/↑/Space:ジャンプ', canvas.width/2, 290);
+    ctx.fillText('マウス:照準  クリック:射撃', canvas.width/2, 315);
+    ctx.fillText('敵の上に乗って踏みつけも可', canvas.width/2, 340);
+    ctx.fillText('アイテムで武器強化！', canvas.width/2, 365);
+    // スタート（点滅）
+    if (Math.floor(titleT/20)%2) {
+        ctx.fillStyle='#fc0'; ctx.font='bold 20px monospace';
+        ctx.fillText('PRESS SPACE TO START', canvas.width/2, 420);
     }
     ctx.textAlign='left';
 }
 
 function drawGameOver() {
-    ctx.fillStyle='rgba(0,0,0,0.75)'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle='#000'; ctx.fillRect(0,0,canvas.width,canvas.height);
     ctx.textAlign='center';
-    ctx.shadowBlur=30; ctx.shadowColor='#ff0000';
-    ctx.fillStyle='#cc0000'; ctx.font='bold 64px monospace';
-    ctx.fillText('YOU DIED', canvas.width/2, 210);
-    ctx.shadowBlur=0;
-    ctx.fillStyle='#888'; ctx.font='22px monospace';
-    ctx.fillText(`スコア: ${score}`, canvas.width/2, 280);
-    ctx.fillStyle='#555'; ctx.font='16px monospace';
-    ctx.fillText(`武器: ${WEAPONS[player.weapon].name}  |  弾数×${player.upgrades.multiShot}  速射×${player.upgrades.fireRate.toFixed(1)}`, canvas.width/2, 320);
-    const blink=Math.sin(Date.now()*0.006)>0;
-    if (blink) { ctx.fillStyle='#cc6600'; ctx.font='20px monospace'; ctx.fillText('SPACE でリトライ', canvas.width/2, 390); }
+    ctx.fillStyle='#f00'; ctx.font='bold 56px monospace';
+    ctx.fillText('YOU DIED', canvas.width/2, 200);
+    pxRect(canvas.width/2-160, 210, 320, 4, '#800');
+    ctx.fillStyle='#aaa'; ctx.font='20px monospace';
+    ctx.fillText(`SCORE ${score}`, canvas.width/2, 270);
+    ctx.fillStyle='#666'; ctx.font='14px monospace';
+    ctx.fillText(`${WEAPONS[player.weapon].name} | 弾×${player.upgrades.multiShot} 速射×${player.upgrades.fireRate.toFixed(1)}`, canvas.width/2, 310);
+    if (Math.floor(Date.now()/500)%2) {
+        ctx.fillStyle='#fc0'; ctx.font='bold 18px monospace';
+        ctx.fillText('PRESS SPACE TO RETRY', canvas.width/2, 380);
+    }
     ctx.textAlign='left';
 }
 
 function drawClear() {
-    ctx.fillStyle='rgba(0,0,0,0.75)'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle='#000'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    // 星の演出
+    for (let i=0;i<40;i++) {
+        const tx=(i*97+30)%canvas.width, ty=(i*67+20)%canvas.height;
+        if (Math.floor((Date.now()/200+i)%3)<2) px(tx, ty, 1, 1, '#ff0');
+    }
     ctx.textAlign='center';
-    ctx.shadowBlur=30; ctx.shadowColor='#ffcc00';
-    ctx.fillStyle='#ffcc00'; ctx.font='bold 60px monospace';
-    ctx.fillText('ALL CLEARED', canvas.width/2, 200);
-    ctx.shadowBlur=0;
-    ctx.fillStyle='#aaa'; ctx.font='24px monospace';
-    ctx.fillText(`最終スコア: ${score}`, canvas.width/2, 270);
-    ctx.fillStyle='#66aa66'; ctx.font='18px monospace';
-    ctx.fillText('深淵より生還せり…', canvas.width/2, 315);
-    const blink=Math.sin(Date.now()*0.006)>0;
-    if (blink) { ctx.fillStyle='#ffaa00'; ctx.font='20px monospace'; ctx.fillText('SPACE でもう一度', canvas.width/2, 400); }
+    ctx.fillStyle='#fc0'; ctx.font='bold 52px monospace';
+    ctx.fillText('ALL CLEAR!', canvas.width/2, 190);
+    pxRect(canvas.width/2-180, 200, 360, 4, '#a80');
+    ctx.fillStyle='#fff'; ctx.font='22px monospace';
+    ctx.fillText(`SCORE ${score}`, canvas.width/2, 260);
+    ctx.fillStyle='#6a6'; ctx.font='16px monospace';
+    ctx.fillText('深淵より生還せり...', canvas.width/2, 310);
+    if (Math.floor(Date.now()/500)%2) {
+        ctx.fillStyle='#fc0'; ctx.font='bold 18px monospace';
+        ctx.fillText('PRESS SPACE TO PLAY AGAIN', canvas.width/2, 390);
+    }
     ctx.textAlign='left';
 }
 
