@@ -200,6 +200,8 @@ let enemies  = [];
 let bullets  = [];
 let items    = [];
 let particles= [];
+let movingPlatforms = [];   // 動く床
+let crumblingBlocks = [];   // 崩れる床
 let cameraX  = 0;
 let shakeAmt = 0;
 let levelMap = [];
@@ -1209,6 +1211,180 @@ function getTilesAround(px, py, pw, ph) {
 }
 
 // ============================================================
+//  動く床・崩れる床・スパイク
+// ============================================================
+class MovingPlatform {
+    constructor(x, y, w, dir, dist, spd) {
+        // dir: 'h'=水平, 'v'=垂直
+        this.ox = x; this.oy = y; // 起点
+        this.x = x; this.y = y;
+        this.w = w; this.h = TILE/2;
+        this.dir = dir;
+        this.dist = dist; // 移動距離(px)
+        this.spd = spd || 1;
+        this.t = 0;
+        this.prevX = x; this.prevY = y;
+    }
+    update() {
+        this.prevX = this.x; this.prevY = this.y;
+        this.t += this.spd;
+        const progress = Math.sin(this.t * 0.02) * 0.5 + 0.5;
+        if (this.dir === 'h') {
+            this.x = this.ox + progress * this.dist;
+        } else {
+            this.y = this.oy + progress * this.dist;
+        }
+    }
+    rect() { return {x:this.x, y:this.y, w:this.w, h:this.h}; }
+    draw(camX) {
+        const sx = Math.round(this.x - camX), sy = Math.round(this.y);
+        if (sx < -this.w-20 || sx > canvas.width+20) return;
+        const theme = getStageTheme();
+        pxRect(sx, sy, this.w, this.h, theme.tileFg2);
+        pxRect(sx, sy, this.w, 3, theme.tileHi2);
+        pxRect(sx, sy+this.h-2, this.w, 2, theme.tileSh2);
+        // レール装飾
+        for (let i = 8; i < this.w-4; i += 12) {
+            px(sx+i, sy+this.h/2-1, 4, 2, theme.tileSh2);
+        }
+    }
+}
+
+class CrumblingBlock {
+    constructor(x, y, w) {
+        this.x = x; this.y = y;
+        this.w = w || TILE; this.h = TILE;
+        this.state = 'solid'; // 'solid','shaking','crumbling','gone','regen'
+        this.timer = 0;
+        this.regenTimer = 0;
+        this.shakeOff = 0;
+    }
+    stepped() {
+        if (this.state === 'solid') {
+            this.state = 'shaking';
+            this.timer = 40; // 0.66秒後に崩壊
+        }
+    }
+    update() {
+        if (this.state === 'shaking') {
+            this.timer--;
+            this.shakeOff = (Math.random()-0.5) * 3;
+            if (this.timer <= 0) {
+                this.state = 'crumbling';
+                this.timer = 8;
+                spawnParticles(this.x+this.w/2, this.y+this.h/2, '#886644', 10, 3);
+            }
+        } else if (this.state === 'crumbling') {
+            this.timer--;
+            if (this.timer <= 0) {
+                this.state = 'gone';
+                this.regenTimer = 300; // 5秒で再生
+            }
+        } else if (this.state === 'gone') {
+            this.regenTimer--;
+            if (this.regenTimer <= 0) {
+                this.state = 'solid';
+                this.shakeOff = 0;
+            }
+        }
+    }
+    isSolid() { return this.state === 'solid' || this.state === 'shaking'; }
+    rect() { return this.isSolid() ? {x:this.x, y:this.y, w:this.w, h:this.h} : null; }
+    draw(camX) {
+        const sx = Math.round(this.x - camX + this.shakeOff), sy = Math.round(this.y);
+        if (sx < -this.w-20 || sx > canvas.width+20) return;
+        const theme = getStageTheme();
+        if (this.state === 'solid' || this.state === 'shaking') {
+            const alpha = this.state === 'shaking' ? 0.6 + Math.random()*0.4 : 1.0;
+            ctx.globalAlpha = alpha;
+            pxRect(sx, sy, this.w, this.h, '#665544');
+            pxRect(sx, sy, this.w, 3, '#887766');
+            pxRect(sx, sy+this.h-2, this.w, 2, '#443322');
+            // 亀裂パターン
+            px(sx+this.w/3, sy+4, 1, this.h-8, '#44332266');
+            px(sx+this.w*2/3, sy+6, 1, this.h-10, '#44332266');
+            ctx.globalAlpha = 1;
+        } else if (this.state === 'crumbling') {
+            ctx.globalAlpha = this.timer / 8;
+            pxRect(sx, sy, this.w, this.h, '#554433');
+            ctx.globalAlpha = 1;
+        }
+        // gone状態: 何も描画しない（再生中はうっすら表示）
+        if (this.state === 'gone' && this.regenTimer < 60) {
+            ctx.globalAlpha = (60 - this.regenTimer) / 60 * 0.3;
+            pxRect(Math.round(this.x-camX), sy, this.w, this.h, '#665544');
+            ctx.globalAlpha = 1;
+        }
+    }
+}
+
+// スパイクタイル(v=3)のダメージ処理
+function checkSpikeDamage() {
+    const pc = Math.floor((player.x + player.w/2) / TILE);
+    const pr = Math.floor((player.y + player.h - 2) / TILE);
+    if (pr >= 0 && pr < levelMap.length && pc >= 0 && pc < (levelMap[0]||[]).length) {
+        if (levelMap[pr][pc] === 3 && player.invincible <= 0) {
+            playerHit(15);
+            player.vy = BASE_JUMP_FORCE * 0.5; // 弾き飛ばし
+        }
+    }
+}
+
+// 動く床のプレイヤー当たり判定
+function updateMovingPlatforms() {
+    for (const mp of movingPlatforms) {
+        mp.update();
+        // プレイヤーとの当たり判定
+        const r = mp.rect();
+        const pr = {x:player.x, y:player.y, w:player.w, h:player.h};
+        // 上から乗る判定
+        if (player.vy >= 0 && rectsOverlap(pr, {x:r.x, y:r.y-2, w:r.w, h:r.h+4})) {
+            if (player.y + player.h >= r.y && player.y + player.h <= r.y + r.h + 6) {
+                player.y = r.y - player.h;
+                player.vy = 0;
+                player.onGround = true;
+                // 床の移動量をプレイヤーに伝搬
+                player.x += mp.x - mp.prevX;
+                player.y += mp.y - mp.prevY;
+            }
+        }
+        // 横・下からの衝突
+        if (rectsOverlap(pr, r)) {
+            if (player.vy < 0 && player.y > r.y) {
+                player.y = r.y + r.h;
+                player.vy = 0;
+            }
+        }
+    }
+}
+
+// 崩れる床のプレイヤー当たり判定
+function updateCrumblingBlocks() {
+    for (const cb of crumblingBlocks) {
+        cb.update();
+        if (!cb.isSolid()) continue;
+        const r = {x:cb.x, y:cb.y, w:cb.w, h:cb.h};
+        const pr = {x:player.x, y:player.y, w:player.w, h:player.h};
+        if (rectsOverlap(pr, r)) {
+            if (player.vy >= 0 && player.y + player.h <= r.y + 10) {
+                player.y = r.y - player.h;
+                player.vy = 0;
+                player.onGround = true;
+                cb.stepped();
+            } else if (player.vy < 0) {
+                player.y = r.y + r.h;
+                player.vy = 0;
+            } else {
+                // 横からの衝突
+                if (player.vx > 0) player.x = r.x - player.w;
+                else player.x = r.x + r.w;
+                player.vx = 0;
+            }
+        }
+    }
+}
+
+// ============================================================
 //  レベルデータ
 // ============================================================
 // ステージテーマ定義
@@ -1232,273 +1408,537 @@ function getStageTheme() { return STAGE_THEMES[getStageIdx()] || STAGE_THEMES[2]
 
 const LEVELS = [
     // ===== STAGE 1: 廃墟の地下 =====
+    // 1-1: チュートリアル的。基本操作を学ぶ。穴を飛び越え、壁を登り、初スパイクに出会う
     {
         name:'廃墟の地下', stage:0,
         bg1:'#000000', bg2:'#0d0010',
-        width:60,
+        width:65,
         enemySpawns: [
-            {type:'zombie', col:14, row:ROWS-3},
-            {type:'zombie', col:22, row:ROWS-3},
-            {type:'shade',  col:18, row:ROWS-6},
-            {type:'zombie', col:35, row:ROWS-3},
-            {type:'shade',  col:40, row:ROWS-6},
-            {type:'demon',  col:50, row:ROWS-3},
-            {type:'spawner',col:28, row:ROWS-3},
+            {type:'zombie', col:12, row:ROWS-3},
+            {type:'zombie', col:20, row:ROWS-3},
+            {type:'shade',  col:26, row:ROWS-7},
+            {type:'zombie', col:34, row:ROWS-3},
+            {type:'spawner',col:40, row:ROWS-5},
+            {type:'shade',  col:46, row:ROWS-6},
+            {type:'demon',  col:55, row:ROWS-3},
         ],
         generate(w) {
             const m = blank(w, ROWS);
+            // 基本地形: 地面 + 穴
             fillRow(m, ROWS-1, 0, w, 1); fillRow(m, ROWS-2, 0, w, 1);
-            for (const [s,l] of [[10,3],[22,4],[36,3],[46,3]]) clearCols(m,s,l,ROWS-2,ROWS);
-            platf(m, [[7,ROWS-5,4],[14,ROWS-6,3],[23,ROWS-5,4],[29,ROWS-4,3],[38,ROWS-5,3],[43,ROWS-6,4],[52,ROWS-5,3]]);
-            for (let i=0;i<4;i++) for(let j=0;j<=i;j++) set(m,52+i,ROWS-3-j,2);
-            platf(m, [[56, ROWS-6, 3]]);
-            setGoal(m, 57, ROWS-7);
+            clearCols(m,10,3,ROWS-2,ROWS); // 最初の穴（簡単なジャンプ）
+            clearCols(m,24,4,ROWS-2,ROWS); // 広い穴（足場必要）
+            clearCols(m,42,5,ROWS-2,ROWS); // スパイク穴
+            // 穴の底にスパイク（落ちたら痛い、という学習）
+            spikes(m, 42, ROWS-1, 5);
+            // 段差と迷路的要素: 壁で区切られたエリア
+            wall(m, 18, ROWS-3, 4); // 壁: 上を飛び越えるか下をくぐるか
+            // 足場
+            platf(m,[[7,ROWS-5,3],[13,ROWS-6,3],[18,ROWS-8,3],
+                     [25,ROWS-5,3],[30,ROWS-4,4],
+                     [36,ROWS-6,3],[43,ROWS-5,2],[46,ROWS-7,2],
+                     [50,ROWS-5,4]]);
+            // 上層ルート（壁を越えた先に足場）
+            platf(m,[[15,ROWS-9,4]]);
+            // ゴール前の階段
+            for (let i=0;i<3;i++) for(let j=0;j<=i;j++) set(m,57+i,ROWS-3-j,2);
+            platf(m,[[60,ROWS-6,3]]);
+            setGoal(m, 62, ROWS-7);
             return m;
+        },
+        setupDynamic() {
+            // 穴の上に崩れる床（見た目は普通だけど乗ると崩れる）
+            crumblingBlocks.push(new CrumblingBlock(24*TILE, (ROWS-3)*TILE, TILE*2));
         }
     },
+    // 1-2: 縦方向の探索。高い壁を登っていく塔構造 + 崩れる足場
     {
         name:'呪われた塔', stage:0,
         bg1:'#050008', bg2:'#10001a',
         width:75,
         enemySpawns: [
-            {type:'zombie', col:8, row:ROWS-3},{type:'zombie',col:12,row:ROWS-3},
-            {type:'shade', col:18, row:ROWS-7},{type:'shade', col:25,row:ROWS-8},
-            {type:'zombie', col:32, row:ROWS-3},{type:'demon', col:40,row:ROWS-3},
-            {type:'shade', col:48, row:ROWS-6},{type:'spawner',col:55,row:ROWS-3},
-            {type:'demon', col:65, row:ROWS-3},{type:'shade', col:60,row:ROWS-7},
+            {type:'zombie', col:10, row:ROWS-3},{type:'shade', col:16, row:ROWS-7},
+            {type:'zombie', col:22, row:ROWS-3},{type:'shade', col:30, row:ROWS-9},
+            {type:'demon',  col:38, row:ROWS-3},{type:'spawner',col:45, row:ROWS-5},
+            {type:'shade',  col:52, row:ROWS-7},{type:'demon',  col:58, row:ROWS-3},
+            {type:'shade',  col:64, row:ROWS-8},{type:'zombie', col:68, row:ROWS-3},
         ],
         generate(w) {
             const m = blank(w, ROWS);
             fillRow(m, ROWS-1, 0, w, 1); fillRow(m, ROWS-2, 0, w, 1);
-            for (const [s,l] of [[8,4],[20,5],[34,4],[50,5],[62,3]]) clearCols(m,s,l,ROWS-2,ROWS);
-            platf(m,[[5,ROWS-5,3],[10,ROWS-7,3],[16,ROWS-5,4],[23,ROWS-8,3],[28,ROWS-5,4],
-                [35,ROWS-6,2],[40,ROWS-4,3],[45,ROWS-7,3],[51,ROWS-5,4],[58,ROWS-6,3],[65,ROWS-4,4]]);
-            for (let j=0;j<5;j++) set(m,30,ROWS-3-j,2);
-            for (let j=0;j<4;j++) set(m,52,ROWS-3-j,2);
+            // 穴（落下で即死ではなくスパイクダメージ）
+            for (const [s,l] of [[14,4],[28,5],[44,4],[56,4]]) {
+                clearCols(m,s,l,ROWS-2,ROWS);
+                spikes(m, s, ROWS-1, l); // 穴底にスパイク
+            }
+            // 塔構造: 壁で仕切り、上を行くか下を行くか選択
+            wall(m, 20, ROWS-3, 6);
+            wall(m, 36, ROWS-3, 5);
+            wall(m, 52, ROWS-3, 7);
+            // 各壁に通路（上ルートの方が敵少なく安全、下ルートは近道）
+            set(m, 20, ROWS-4, 0); // 壁に穴（下ルート）
+            set(m, 36, ROWS-4, 0);
+            // 多段足場（塔の内部を登る感覚）
+            platf(m,[[6,ROWS-5,3],[11,ROWS-7,3],[17,ROWS-5,4],
+                     [21,ROWS-6,3],[25,ROWS-8,4],[29,ROWS-5,3],
+                     [33,ROWS-7,3],[37,ROWS-9,4],[41,ROWS-5,3],
+                     [46,ROWS-7,3],[50,ROWS-5,4],[53,ROWS-9,3],
+                     [57,ROWS-6,3],[62,ROWS-8,3],[66,ROWS-5,4]]);
+            // 天井近くの秘密ルート
+            platf(m,[[30,ROWS-11,6]]);
             platf(m, [[w-5, ROWS-4, 3]]);
             setGoal(m, w-4, ROWS-5);
             return m;
+        },
+        setupDynamic() {
+            // 壁を越える動く足場
+            movingPlatforms.push(new MovingPlatform(19*TILE, (ROWS-8)*TILE, TILE*2, 'v', -3*TILE, 1.2));
+            // 崩れる橋（穴の上）
+            crumblingBlocks.push(new CrumblingBlock(44*TILE, (ROWS-3)*TILE, TILE*2));
+            crumblingBlocks.push(new CrumblingBlock(46*TILE, (ROWS-3)*TILE, TILE*2));
         }
     },
+    // 1-3: 大穴だらけ。動く床を渡る + 崩れる床の連続。ミスが命取り
     {
         name:'奈落の深淵', stage:0,
         bg1:'#000005', bg2:'#080014',
-        width:80,
+        width:85,
         enemySpawns: [
-            {type:'zombie',col:6,row:ROWS-3},{type:'shade',col:14,row:ROWS-6},
-            {type:'demon',col:20,row:ROWS-3},{type:'zombie',col:28,row:ROWS-3},
-            {type:'shade',col:34,row:ROWS-7},{type:'spawner',col:42,row:ROWS-3},
-            {type:'demon',col:50,row:ROWS-3},{type:'shade',col:56,row:ROWS-6},
-            {type:'zombie',col:62,row:ROWS-3},{type:'demon',col:68,row:ROWS-3},
-            {type:'shade',col:72,row:ROWS-8},
+            {type:'zombie',col:6,row:ROWS-3},{type:'shade',col:16,row:ROWS-6},
+            {type:'demon',col:22,row:ROWS-3},{type:'shade',col:32,row:ROWS-7},
+            {type:'spawner',col:40,row:ROWS-5},{type:'demon',col:50,row:ROWS-3},
+            {type:'shade',col:56,row:ROWS-7},{type:'zombie',col:62,row:ROWS-3},
+            {type:'demon',col:70,row:ROWS-3},{type:'shade',col:76,row:ROWS-8},
         ],
         generate(w) {
             const m = blank(w, ROWS);
+            // 島状の地形（大穴で分断）
             fillRow(m, ROWS-1, 0, 10, 1); fillRow(m, ROWS-2, 0, 10, 1);
-            fillRow(m, ROWS-1, 16, 32, 1); fillRow(m, ROWS-2, 16, 32, 1);
-            fillRow(m, ROWS-1, 38, 54, 1); fillRow(m, ROWS-2, 38, 54, 1);
-            fillRow(m, ROWS-1, 60, w, 1); fillRow(m, ROWS-2, 60, w, 1);
-            platf(m,[[11,ROWS-4,3],[14,ROWS-6,2],[33,ROWS-5,3],[36,ROWS-7,2],[55,ROWS-4,3],[58,ROWS-6,2]]);
-            platf(m,[[8,ROWS-5,3],[22,ROWS-5,4],[30,ROWS-7,3],[44,ROWS-5,3],[52,ROWS-6,3],[65,ROWS-5,4]]);
+            fillRow(m, ROWS-1, 18, 28, 1); fillRow(m, ROWS-2, 18, 28, 1);
+            fillRow(m, ROWS-1, 36, 46, 1); fillRow(m, ROWS-2, 36, 46, 1);
+            fillRow(m, ROWS-1, 54, 64, 1); fillRow(m, ROWS-2, 54, 64, 1);
+            fillRow(m, ROWS-1, 72, w, 1); fillRow(m, ROWS-2, 72, w, 1);
+            // 各島間のスパイク落下地帯
+            spikes(m, 10, ROWS-1, 8); spikes(m, 28, ROWS-1, 8);
+            spikes(m, 46, ROWS-1, 8); spikes(m, 64, ROWS-1, 8);
+            // 島間を繋ぐ足場
+            platf(m,[[11,ROWS-4,2],[14,ROWS-6,2],[16,ROWS-4,2],
+                     [29,ROWS-5,2],[32,ROWS-7,2],[34,ROWS-5,2],
+                     [47,ROWS-4,2],[50,ROWS-6,2],[52,ROWS-4,2],
+                     [65,ROWS-5,2],[68,ROWS-7,2],[70,ROWS-5,2]]);
+            // 各島内の複雑な地形
+            wall(m, 24, ROWS-3, 4);
+            platf(m,[[7,ROWS-6,3],[20,ROWS-5,3],[25,ROWS-7,3],
+                     [38,ROWS-5,4],[42,ROWS-7,3],
+                     [57,ROWS-5,3],[60,ROWS-7,3],
+                     [74,ROWS-5,4],[78,ROWS-7,3]]);
             platf(m, [[w-5, ROWS-4, 3]]);
             setGoal(m, w-4, ROWS-5);
             return m;
+        },
+        setupDynamic() {
+            // 大穴を渡る動く床（水平移動）
+            movingPlatforms.push(new MovingPlatform(12*TILE, (ROWS-3)*TILE, TILE*3, 'h', 4*TILE, 0.8));
+            movingPlatforms.push(new MovingPlatform(48*TILE, (ROWS-3)*TILE, TILE*3, 'h', 4*TILE, 1.0));
+            // 崩れる足場（島間の橋）
+            crumblingBlocks.push(new CrumblingBlock(29*TILE, (ROWS-4)*TILE, TILE*2));
+            crumblingBlocks.push(new CrumblingBlock(65*TILE, (ROWS-4)*TILE, TILE*2));
         }
     },
+    // 1-BOSS: 骸骨王。広いアリーナ + スパイクゾーン + 逃げ場の足場
     {
         name:'骸骨王の間', stage:0, boss:1,
         bg1:'#0a0500', bg2:'#1a0a00',
-        width:30,
-        enemySpawns: [{type:'boss1', col:18, row:ROWS-3}],
+        width:32,
+        enemySpawns: [{type:'boss1', col:20, row:ROWS-3}],
         generate(w) {
             const m = blank(w, ROWS);
             fillRow(m, ROWS-1, 0, w, 1); fillRow(m, ROWS-2, 0, w, 1);
-            platf(m,[[4,ROWS-5,3],[12,ROWS-6,3],[20,ROWS-5,3],[w-6,ROWS-6,3]]);
+            // アリーナ両端にスパイク（追い詰められると痛い）
+            spikes(m, 1, ROWS-3, 3);
+            spikes(m, w-4, ROWS-3, 3);
+            // 逃げ場の高台
+            platf(m,[[3,ROWS-5,3],[8,ROWS-7,3],[14,ROWS-5,4],[22,ROWS-7,3],[w-7,ROWS-5,3]]);
+            // 中央の壁（ボスの突進を避ける遮蔽物）
+            wall(m, 15, ROWS-3, 3);
             setGoal(m, w-3, ROWS-3);
             return m;
         }
     },
     // ===== STAGE 2: 氷の洞窟 =====
+    // 2-1: 氷の洞窟入口。天井から氷柱、狭い通路、動く床初登場
     {
         name:'凍てつく入口', stage:1,
         bg1:'#000510', bg2:'#001020',
-        width:65,
+        width:70,
         enemySpawns: [
             {type:'zombie',col:10,row:ROWS-3},{type:'zombie',col:18,row:ROWS-3},
-            {type:'shade',col:24,row:ROWS-6},{type:'demon',col:32,row:ROWS-3},
-            {type:'shade',col:38,row:ROWS-7},{type:'zombie',col:44,row:ROWS-3},
-            {type:'spawner',col:50,row:ROWS-3},{type:'demon',col:56,row:ROWS-3},
-            {type:'shade',col:42,row:ROWS-8},{type:'shade',col:52,row:ROWS-6},
+            {type:'shade',col:24,row:ROWS-7},{type:'demon',col:34,row:ROWS-3},
+            {type:'shade',col:40,row:ROWS-8},{type:'spawner',col:48,row:ROWS-5},
+            {type:'zombie',col:54,row:ROWS-3},{type:'demon',col:60,row:ROWS-3},
+            {type:'shade',col:56,row:ROWS-7},{type:'shade',col:64,row:ROWS-6},
         ],
         generate(w) {
             const m = blank(w, ROWS);
             fillRow(m, ROWS-1, 0, w, 1); fillRow(m, ROWS-2, 0, w, 1);
-            for (const [s,l] of [[12,3],[26,4],[40,3],[52,3]]) clearCols(m,s,l,ROWS-2,ROWS);
-            platf(m,[[6,ROWS-5,4],[13,ROWS-6,3],[20,ROWS-4,3],[27,ROWS-7,4],[34,ROWS-5,3],
-                [41,ROWS-6,3],[48,ROWS-4,4],[55,ROWS-5,3],[60,ROWS-6,3]]);
+            // 穴
+            clearCols(m,15,4,ROWS-2,ROWS);
+            clearCols(m,30,5,ROWS-2,ROWS);
+            clearCols(m,50,4,ROWS-2,ROWS);
+            spikes(m, 30, ROWS-1, 5);
+            // 天井からの氷柱（天井と地面の間を狭くする）
+            for (let c=12;c<14;c++) for (let r=0;r<4;r++) set(m,c,r,2);
+            for (let c=26;c<28;c++) for (let r=0;r<5;r++) set(m,c,r,2);
+            for (let c=44;c<46;c++) for (let r=0;r<3;r++) set(m,c,r,2);
+            // 壁で区切られた部屋
+            wall(m, 22, ROWS-3, 5);
+            set(m, 22, ROWS-5, 0); // 壁に穴
+            wall(m, 42, ROWS-3, 6);
+            // 足場
+            platf(m,[[6,ROWS-5,4],[16,ROWS-5,3],[19,ROWS-7,3],
+                     [23,ROWS-6,4],[28,ROWS-8,3],[31,ROWS-5,2],[35,ROWS-4,3],
+                     [38,ROWS-7,3],[43,ROWS-9,3],[46,ROWS-5,3],
+                     [51,ROWS-6,2],[55,ROWS-5,3],[60,ROWS-7,4],[65,ROWS-5,3]]);
             platf(m, [[w-5, ROWS-4, 3]]);
             setGoal(m, w-4, ROWS-5);
             return m;
+        },
+        setupDynamic() {
+            // 穴の上を渡る動く床
+            movingPlatforms.push(new MovingPlatform(15*TILE, (ROWS-4)*TILE, TILE*2, 'h', 3*TILE, 0.7));
+            // 壁を越える上下動く床
+            movingPlatforms.push(new MovingPlatform(42*TILE-TILE, (ROWS-8)*TILE, TILE*2, 'v', -2*TILE, 1.0));
         }
     },
+    // 2-2: 氷柱の回廊。壁で仕切られた複数の部屋を攻略。崩れる床で落とされる
     {
         name:'氷柱の回廊', stage:1,
         bg1:'#000818', bg2:'#001228',
-        width:80,
+        width:85,
         enemySpawns: [
-            {type:'zombie',col:8,row:ROWS-3},{type:'shade',col:14,row:ROWS-7},
-            {type:'demon',col:22,row:ROWS-3},{type:'shade',col:28,row:ROWS-8},
-            {type:'spawner',col:36,row:ROWS-3},{type:'zombie',col:42,row:ROWS-3},
-            {type:'demon',col:50,row:ROWS-3},{type:'shade',col:56,row:ROWS-6},
-            {type:'spawner',col:62,row:ROWS-3},{type:'demon',col:70,row:ROWS-3},
-            {type:'shade',col:66,row:ROWS-8},{type:'shade',col:74,row:ROWS-7},
+            {type:'zombie',col:8,row:ROWS-3},{type:'shade',col:16,row:ROWS-8},
+            {type:'demon',col:24,row:ROWS-3},{type:'shade',col:32,row:ROWS-9},
+            {type:'spawner',col:38,row:ROWS-5},{type:'zombie',col:46,row:ROWS-3},
+            {type:'demon',col:54,row:ROWS-3},{type:'shade',col:60,row:ROWS-7},
+            {type:'spawner',col:66,row:ROWS-5},{type:'demon',col:74,row:ROWS-3},
+            {type:'shade',col:70,row:ROWS-9},{type:'shade',col:78,row:ROWS-7},
         ],
         generate(w) {
             const m = blank(w, ROWS);
             fillRow(m, ROWS-1, 0, w, 1); fillRow(m, ROWS-2, 0, w, 1);
-            for (const [s,l] of [[10,4],[24,5],[38,4],[54,4],[66,3]]) clearCols(m,s,l,ROWS-2,ROWS);
-            // 氷柱（縦壁）
-            for (let j=0;j<6;j++) set(m,20,ROWS-3-j,2);
-            for (let j=0;j<5;j++) set(m,40,ROWS-3-j,2);
-            for (let j=0;j<7;j++) set(m,60,ROWS-3-j,2);
-            platf(m,[[5,ROWS-5,3],[11,ROWS-7,3],[16,ROWS-5,4],[25,ROWS-6,3],[30,ROWS-4,3],
-                [35,ROWS-7,3],[42,ROWS-5,4],[48,ROWS-6,3],[55,ROWS-5,3],[62,ROWS-7,3],[68,ROWS-5,4],[74,ROWS-4,3]]);
+            // 穴（スパイク付き）
+            for (const [s,l] of [[12,4],[28,5],[44,4],[58,4],[72,3]]) {
+                clearCols(m,s,l,ROWS-2,ROWS);
+                spikes(m, s, ROWS-1, l);
+            }
+            // 氷柱の壁（部屋の仕切り）- 上から天井が下がる + 下から壁
+            wall(m, 20, ROWS-3, 7);
+            wall(m, 40, ROWS-3, 6);
+            wall(m, 62, ROWS-3, 8);
+            // 各壁に通過用の穴
+            set(m, 20, ROWS-5, 0); set(m, 20, ROWS-6, 0);
+            set(m, 40, ROWS-4, 0);
+            set(m, 62, ROWS-5, 0); set(m, 62, ROWS-6, 0);
+            // 天井からの氷柱（狭い通路を作る）
+            for (let c=18;c<20;c++) for (let r=0;r<6;r++) set(m,c,r,2);
+            for (let c=38;c<40;c++) for (let r=0;r<5;r++) set(m,c,r,2);
+            for (let c=60;c<62;c++) for (let r=0;r<7;r++) set(m,c,r,2);
+            // 各部屋内の足場
+            platf(m,[[5,ROWS-5,3],[9,ROWS-7,3],[13,ROWS-5,3],[17,ROWS-8,2],
+                     [22,ROWS-6,3],[26,ROWS-4,3],[29,ROWS-7,3],[33,ROWS-9,3],
+                     [35,ROWS-5,3],[42,ROWS-7,3],[46,ROWS-5,4],[50,ROWS-7,3],
+                     [54,ROWS-5,3],[59,ROWS-8,2],[63,ROWS-7,3],
+                     [67,ROWS-5,3],[73,ROWS-6,3],[77,ROWS-4,4]]);
             platf(m, [[w-5, ROWS-4, 3]]);
             setGoal(m, w-4, ROWS-5);
             return m;
+        },
+        setupDynamic() {
+            // 部屋間を繋ぐ動く床
+            movingPlatforms.push(new MovingPlatform(12*TILE, (ROWS-4)*TILE, TILE*2, 'h', 3*TILE, 0.9));
+            movingPlatforms.push(new MovingPlatform(58*TILE, (ROWS-4)*TILE, TILE*2, 'h', 3*TILE, 1.1));
+            // 崩れる床トラップ（敵の前に配置）
+            crumblingBlocks.push(new CrumblingBlock(23*TILE, (ROWS-3)*TILE, TILE*3));
+            crumblingBlocks.push(new CrumblingBlock(53*TILE, (ROWS-3)*TILE, TILE*2));
         }
     },
+    // 2-3: 大氷穴。ほぼ穴だらけ、動く床と崩れる床が命綱
     {
         name:'氷結の大穴', stage:1,
         bg1:'#001020', bg2:'#002040',
-        width:85,
+        width:90,
         enemySpawns: [
-            {type:'zombie',col:6,row:ROWS-3},{type:'demon',col:14,row:ROWS-3},
-            {type:'shade',col:20,row:ROWS-7},{type:'spawner',col:28,row:ROWS-3},
-            {type:'shade',col:34,row:ROWS-8},{type:'demon',col:42,row:ROWS-3},
-            {type:'zombie',col:48,row:ROWS-3},{type:'shade',col:54,row:ROWS-6},
-            {type:'demon',col:62,row:ROWS-3},{type:'spawner',col:68,row:ROWS-3},
-            {type:'shade',col:74,row:ROWS-7},{type:'demon',col:78,row:ROWS-3},
+            {type:'shade',col:10,row:ROWS-6},{type:'demon',col:18,row:ROWS-3},
+            {type:'shade',col:26,row:ROWS-8},{type:'spawner',col:34,row:ROWS-5},
+            {type:'shade',col:42,row:ROWS-7},{type:'demon',col:50,row:ROWS-3},
+            {type:'shade',col:58,row:ROWS-9},{type:'spawner',col:64,row:ROWS-5},
+            {type:'demon',col:72,row:ROWS-3},{type:'shade',col:78,row:ROWS-7},
+            {type:'demon',col:84,row:ROWS-3},
         ],
         generate(w) {
             const m = blank(w, ROWS);
-            fillRow(m, ROWS-1, 0, 8, 1); fillRow(m, ROWS-2, 0, 8, 1);
-            fillRow(m, ROWS-1, 14, 30, 1); fillRow(m, ROWS-2, 14, 30, 1);
-            fillRow(m, ROWS-1, 36, 52, 1); fillRow(m, ROWS-2, 36, 52, 1);
-            fillRow(m, ROWS-1, 58, w, 1); fillRow(m, ROWS-2, 58, w, 1);
-            platf(m,[[9,ROWS-4,3],[12,ROWS-6,2],[31,ROWS-5,3],[34,ROWS-7,2],[53,ROWS-4,3],[56,ROWS-6,2]]);
-            platf(m,[[18,ROWS-5,4],[24,ROWS-7,3],[40,ROWS-5,3],[46,ROWS-6,4],[64,ROWS-5,4],[72,ROWS-6,3]]);
+            // 最小限の地面＋大量の穴
+            fillRow(m, ROWS-1, 0, 7, 1); fillRow(m, ROWS-2, 0, 7, 1);
+            fillRow(m, ROWS-1, 15, 22, 1); fillRow(m, ROWS-2, 15, 22, 1);
+            fillRow(m, ROWS-1, 32, 38, 1); fillRow(m, ROWS-2, 32, 38, 1);
+            fillRow(m, ROWS-1, 48, 54, 1); fillRow(m, ROWS-2, 48, 54, 1);
+            fillRow(m, ROWS-1, 68, 76, 1); fillRow(m, ROWS-2, 68, 76, 1);
+            fillRow(m, ROWS-1, 84, w, 1); fillRow(m, ROWS-2, 84, w, 1);
+            // 穴底スパイク
+            spikes(m, 7, ROWS-1, 8); spikes(m, 22, ROWS-1, 10);
+            spikes(m, 38, ROWS-1, 10); spikes(m, 54, ROWS-1, 14);
+            spikes(m, 76, ROWS-1, 8);
+            // 小さな足場（綱渡り的）
+            platf(m,[[8,ROWS-5,2],[11,ROWS-7,2],[13,ROWS-5,2],
+                     [23,ROWS-5,2],[26,ROWS-7,2],[29,ROWS-5,2],
+                     [39,ROWS-5,2],[42,ROWS-7,2],[45,ROWS-5,2],
+                     [55,ROWS-5,2],[58,ROWS-7,2],[61,ROWS-5,2],[64,ROWS-7,2],[66,ROWS-5,2],
+                     [77,ROWS-5,2],[80,ROWS-7,2],[82,ROWS-5,2]]);
+            // 高台
+            platf(m,[[17,ROWS-6,3],[34,ROWS-6,3],[50,ROWS-6,3],[70,ROWS-6,4]]);
             platf(m, [[w-5, ROWS-4, 3]]);
             setGoal(m, w-4, ROWS-5);
             return m;
+        },
+        setupDynamic() {
+            // 大穴を渡る動く床（これがないと渡れない）
+            movingPlatforms.push(new MovingPlatform(8*TILE, (ROWS-3)*TILE, TILE*2, 'h', 5*TILE, 0.7));
+            movingPlatforms.push(new MovingPlatform(38*TILE, (ROWS-3)*TILE, TILE*2, 'h', 8*TILE, 0.6));
+            movingPlatforms.push(new MovingPlatform(76*TILE, (ROWS-4)*TILE, TILE*2, 'h', 6*TILE, 0.9));
+            // 上下する足場
+            movingPlatforms.push(new MovingPlatform(55*TILE, (ROWS-4)*TILE, TILE*2, 'v', -4*TILE, 0.8));
+            // 崩れる足場
+            crumblingBlocks.push(new CrumblingBlock(23*TILE, (ROWS-4)*TILE, TILE*2));
+            crumblingBlocks.push(new CrumblingBlock(61*TILE, (ROWS-4)*TILE, TILE*2));
         }
     },
+    // 2-BOSS: 氷龍。氷のアリーナ + スパイク + 動く足場で避難
     {
         name:'氷龍の巣', stage:1, boss:2,
         bg1:'#001030', bg2:'#002050',
-        width:30,
-        enemySpawns: [{type:'boss2', col:18, row:ROWS-3}],
+        width:34,
+        enemySpawns: [{type:'boss2', col:20, row:ROWS-3}],
         generate(w) {
             const m = blank(w, ROWS);
             fillRow(m, ROWS-1, 0, w, 1); fillRow(m, ROWS-2, 0, w, 1);
-            platf(m,[[3,ROWS-5,3],[10,ROWS-7,4],[18,ROWS-5,3],[24,ROWS-6,3]]);
+            // 中央にスパイク帯（ボスの攻撃と合わせて挟み撃ち）
+            spikes(m, 12, ROWS-3, 4);
+            spikes(m, 20, ROWS-3, 4);
+            // 避難用高台
+            platf(m,[[3,ROWS-5,3],[9,ROWS-7,4],[16,ROWS-9,3],[22,ROWS-5,3],[w-7,ROWS-7,3]]);
             // 氷柱
-            for (let j=0;j<4;j++) set(m,14,ROWS-3-j,2);
+            wall(m, 14, ROWS-3, 4);
             setGoal(m, w-3, ROWS-3);
             return m;
+        },
+        setupDynamic() {
+            // 上下する逃げ場
+            movingPlatforms.push(new MovingPlatform(7*TILE, (ROWS-5)*TILE, TILE*3, 'v', -3*TILE, 1.0));
         }
     },
     // ===== STAGE 3: 灼熱地獄 =====
+    // 3-1: 溶岩地帯。スパイクだらけ + 動く床 + 壁迷路
     {
         name:'灼熱の入口', stage:2,
         bg1:'#100000', bg2:'#200800',
-        width:70,
+        width:75,
         enemySpawns: [
-            {type:'demon',col:10,row:ROWS-3},{type:'shade',col:16,row:ROWS-6},
-            {type:'spawner',col:22,row:ROWS-3},{type:'demon',col:30,row:ROWS-3},
-            {type:'shade',col:36,row:ROWS-7},{type:'zombie',col:42,row:ROWS-3},
-            {type:'demon',col:48,row:ROWS-3},{type:'spawner',col:54,row:ROWS-3},
-            {type:'shade',col:58,row:ROWS-8},{type:'demon',col:64,row:ROWS-3},
-            {type:'shade',col:44,row:ROWS-6},{type:'zombie',col:60,row:ROWS-3},
+            {type:'demon',col:10,row:ROWS-3},{type:'shade',col:18,row:ROWS-7},
+            {type:'spawner',col:24,row:ROWS-5},{type:'demon',col:32,row:ROWS-3},
+            {type:'shade',col:40,row:ROWS-8},{type:'zombie',col:46,row:ROWS-3},
+            {type:'demon',col:52,row:ROWS-3},{type:'spawner',col:58,row:ROWS-5},
+            {type:'shade',col:62,row:ROWS-7},{type:'demon',col:68,row:ROWS-3},
         ],
         generate(w) {
             const m = blank(w, ROWS);
             fillRow(m, ROWS-1, 0, w, 1); fillRow(m, ROWS-2, 0, w, 1);
-            for (const [s,l] of [[8,3],[18,4],[32,3],[44,4],[56,3]]) clearCols(m,s,l,ROWS-2,ROWS);
-            platf(m,[[5,ROWS-5,3],[9,ROWS-7,3],[14,ROWS-5,4],[19,ROWS-6,3],[26,ROWS-4,3],
-                [33,ROWS-7,4],[39,ROWS-5,3],[45,ROWS-6,3],[50,ROWS-4,4],[57,ROWS-7,3],[63,ROWS-5,3]]);
+            // 溶岩ピット
+            clearCols(m,14,5,ROWS-2,ROWS); spikes(m,14,ROWS-1,5);
+            clearCols(m,28,4,ROWS-2,ROWS); spikes(m,28,ROWS-1,4);
+            clearCols(m,42,5,ROWS-2,ROWS); spikes(m,42,ROWS-1,5);
+            clearCols(m,56,4,ROWS-2,ROWS); spikes(m,56,ROWS-1,4);
+            // 地面上のスパイクライン（ジャンプで飛び越える必要がある）
+            spikes(m, 8, ROWS-3, 3);
+            spikes(m, 35, ROWS-3, 3);
+            spikes(m, 50, ROWS-3, 2);
+            // 迷路壁（上下2ルート）
+            wall(m, 22, ROWS-3, 6);
+            set(m, 22, ROWS-5, 0);
+            wall(m, 38, ROWS-3, 7);
+            wall(m, 54, ROWS-3, 5);
+            set(m, 54, ROWS-4, 0);
+            // 足場
+            platf(m,[[5,ROWS-5,3],[11,ROWS-7,3],[15,ROWS-5,3],[19,ROWS-8,3],
+                     [23,ROWS-6,3],[27,ROWS-4,3],[29,ROWS-7,3],[33,ROWS-9,3],
+                     [39,ROWS-5,3],[43,ROWS-6,3],[47,ROWS-8,2],
+                     [51,ROWS-5,3],[55,ROWS-7,3],[57,ROWS-5,2],[61,ROWS-4,3],
+                     [65,ROWS-7,3],[69,ROWS-5,3]]);
             platf(m, [[w-5, ROWS-4, 3]]);
             setGoal(m, w-4, ROWS-5);
             return m;
+        },
+        setupDynamic() {
+            // 溶岩ピット渡り
+            movingPlatforms.push(new MovingPlatform(14*TILE, (ROWS-4)*TILE, TILE*2, 'h', 4*TILE, 0.9));
+            movingPlatforms.push(new MovingPlatform(42*TILE, (ROWS-4)*TILE, TILE*2, 'h', 4*TILE, 1.1));
+            // 崩れる足場（壁の前に罠）
+            crumblingBlocks.push(new CrumblingBlock(21*TILE, (ROWS-3)*TILE, TILE));
+            crumblingBlocks.push(new CrumblingBlock(37*TILE, (ROWS-3)*TILE, TILE*2));
         }
     },
+    // 3-2: 溶岩の橋。島渡り + 全ギミック総動員
     {
         name:'溶岩の橋', stage:2,
         bg1:'#180000', bg2:'#301000',
-        width:85,
+        width:90,
         enemySpawns: [
-            {type:'demon',col:8,row:ROWS-3},{type:'spawner',col:16,row:ROWS-3},
-            {type:'shade',col:22,row:ROWS-7},{type:'demon',col:28,row:ROWS-3},
-            {type:'shade',col:34,row:ROWS-8},{type:'spawner',col:40,row:ROWS-3},
-            {type:'demon',col:48,row:ROWS-3},{type:'shade',col:54,row:ROWS-6},
-            {type:'zombie',col:60,row:ROWS-3},{type:'demon',col:66,row:ROWS-3},
-            {type:'spawner',col:72,row:ROWS-3},{type:'shade',col:78,row:ROWS-7},
+            {type:'demon',col:8,row:ROWS-3},{type:'spawner',col:16,row:ROWS-5},
+            {type:'shade',col:24,row:ROWS-8},{type:'demon',col:32,row:ROWS-3},
+            {type:'shade',col:40,row:ROWS-9},{type:'spawner',col:48,row:ROWS-5},
+            {type:'demon',col:56,row:ROWS-3},{type:'shade',col:62,row:ROWS-7},
+            {type:'demon',col:70,row:ROWS-3},{type:'spawner',col:76,row:ROWS-5},
+            {type:'shade',col:82,row:ROWS-8},{type:'demon',col:84,row:ROWS-3},
         ],
         generate(w) {
             const m = blank(w, ROWS);
-            // 途切れ途切れの溶岩上の橋
+            // 溶岩上の途切れ途切れの島
             fillRow(m, ROWS-1, 0, 12, 1); fillRow(m, ROWS-2, 0, 12, 1);
-            fillRow(m, ROWS-1, 18, 34, 1); fillRow(m, ROWS-2, 18, 34, 1);
-            fillRow(m, ROWS-1, 40, 56, 1); fillRow(m, ROWS-2, 40, 56, 1);
-            fillRow(m, ROWS-1, 62, w, 1); fillRow(m, ROWS-2, 62, w, 1);
-            platf(m,[[13,ROWS-4,3],[16,ROWS-6,2],[35,ROWS-5,3],[38,ROWS-7,2],[57,ROWS-4,3],[60,ROWS-6,2]]);
-            platf(m,[[6,ROWS-5,3],[24,ROWS-6,4],[30,ROWS-4,3],[46,ROWS-5,4],[52,ROWS-7,3],
-                [68,ROWS-5,3],[74,ROWS-6,4],[80,ROWS-4,3]]);
+            fillRow(m, ROWS-1, 20, 30, 1); fillRow(m, ROWS-2, 20, 30, 1);
+            fillRow(m, ROWS-1, 38, 48, 1); fillRow(m, ROWS-2, 38, 48, 1);
+            fillRow(m, ROWS-1, 56, 66, 1); fillRow(m, ROWS-2, 56, 66, 1);
+            fillRow(m, ROWS-1, 74, w, 1); fillRow(m, ROWS-2, 74, w, 1);
+            // 穴底全部スパイク（落ちたらかなり痛い）
+            spikes(m, 12, ROWS-1, 8); spikes(m, 30, ROWS-1, 8);
+            spikes(m, 48, ROWS-1, 8); spikes(m, 66, ROWS-1, 8);
+            // 各島にスパイクトラップ
+            spikes(m, 5, ROWS-3, 2);
+            spikes(m, 25, ROWS-3, 2);
+            spikes(m, 43, ROWS-3, 2);
+            spikes(m, 61, ROWS-3, 2);
+            // 壁（各島に防衛拠点）
+            wall(m, 10, ROWS-3, 5);
+            wall(m, 28, ROWS-3, 6);
+            wall(m, 46, ROWS-3, 5);
+            wall(m, 64, ROWS-3, 6);
+            // 足場
+            platf(m,[[3,ROWS-5,3],[7,ROWS-7,3],
+                     [13,ROWS-5,2],[16,ROWS-7,2],[18,ROWS-5,2],
+                     [22,ROWS-5,3],[26,ROWS-7,3],
+                     [31,ROWS-5,2],[34,ROWS-7,2],[36,ROWS-5,2],
+                     [40,ROWS-5,3],[44,ROWS-7,3],
+                     [49,ROWS-5,2],[52,ROWS-7,2],[54,ROWS-5,2],
+                     [58,ROWS-5,3],[62,ROWS-7,3],
+                     [67,ROWS-5,2],[70,ROWS-7,2],[72,ROWS-5,2],
+                     [76,ROWS-5,4],[82,ROWS-7,3]]);
             platf(m, [[w-5, ROWS-4, 3]]);
             setGoal(m, w-4, ROWS-5);
             return m;
+        },
+        setupDynamic() {
+            // 島間を繋ぐ動く床（各穴に1台ずつ）
+            movingPlatforms.push(new MovingPlatform(13*TILE, (ROWS-3)*TILE, TILE*2, 'h', 5*TILE, 0.7));
+            movingPlatforms.push(new MovingPlatform(31*TILE, (ROWS-3)*TILE, TILE*2, 'h', 5*TILE, 0.8));
+            movingPlatforms.push(new MovingPlatform(49*TILE, (ROWS-3)*TILE, TILE*2, 'h', 5*TILE, 0.9));
+            movingPlatforms.push(new MovingPlatform(67*TILE, (ROWS-3)*TILE, TILE*2, 'h', 5*TILE, 1.0));
+            // 各島の崩れる床トラップ
+            crumblingBlocks.push(new CrumblingBlock(9*TILE, (ROWS-3)*TILE, TILE));
+            crumblingBlocks.push(new CrumblingBlock(27*TILE, (ROWS-3)*TILE, TILE));
+            crumblingBlocks.push(new CrumblingBlock(45*TILE, (ROWS-3)*TILE, TILE));
+            crumblingBlocks.push(new CrumblingBlock(63*TILE, (ROWS-3)*TILE, TILE));
         }
     },
+    // 3-3: 煉獄の階段。上へ上へ登る構造 + 全ギミック + 大量の敵
     {
         name:'煉獄の階段', stage:2,
         bg1:'#200000', bg2:'#401000',
-        width:90,
+        width:95,
         enemySpawns: [
-            {type:'demon',col:6,row:ROWS-3},{type:'demon',col:14,row:ROWS-3},
-            {type:'spawner',col:22,row:ROWS-3},{type:'shade',col:28,row:ROWS-7},
-            {type:'demon',col:36,row:ROWS-3},{type:'shade',col:42,row:ROWS-8},
-            {type:'spawner',col:48,row:ROWS-3},{type:'demon',col:56,row:ROWS-3},
-            {type:'shade',col:62,row:ROWS-6},{type:'demon',col:68,row:ROWS-3},
-            {type:'spawner',col:74,row:ROWS-3},{type:'demon',col:80,row:ROWS-3},
-            {type:'shade',col:84,row:ROWS-7},
+            {type:'demon',col:8,row:ROWS-3},{type:'shade',col:14,row:ROWS-8},
+            {type:'spawner',col:22,row:ROWS-5},{type:'demon',col:30,row:ROWS-3},
+            {type:'shade',col:36,row:ROWS-9},{type:'spawner',col:42,row:ROWS-5},
+            {type:'demon',col:50,row:ROWS-3},{type:'shade',col:56,row:ROWS-8},
+            {type:'spawner',col:62,row:ROWS-5},{type:'demon',col:68,row:ROWS-3},
+            {type:'shade',col:74,row:ROWS-9},{type:'demon',col:80,row:ROWS-3},
+            {type:'spawner',col:86,row:ROWS-5},{type:'shade',col:90,row:ROWS-7},
         ],
         generate(w) {
             const m = blank(w, ROWS);
             fillRow(m, ROWS-1, 0, w, 1); fillRow(m, ROWS-2, 0, w, 1);
-            for (const [s,l] of [[10,4],[24,5],[40,4],[56,5],[72,3]]) clearCols(m,s,l,ROWS-2,ROWS);
-            // 階段状の配置
-            for (let i=0;i<3;i++) for(let j=0;j<=i;j++) set(m,8+i,ROWS-3-j,2);
+            // 穴
+            for (const [s,l] of [[12,5],[26,5],[40,4],[54,5],[70,4],[84,3]]) {
+                clearCols(m,s,l,ROWS-2,ROWS);
+                spikes(m, s, ROWS-1, l);
+            }
+            // 地面スパイク
+            spikes(m, 6, ROWS-3, 2); spikes(m, 20, ROWS-3, 3);
+            spikes(m, 34, ROWS-3, 2); spikes(m, 48, ROWS-3, 3);
+            spikes(m, 64, ROWS-3, 2); spikes(m, 78, ROWS-3, 2);
+            // 階段状の登り構造
+            for (let i=0;i<4;i++) for(let j=0;j<=i;j++) set(m,8+i,ROWS-3-j,2);
             for (let i=0;i<3;i++) for(let j=0;j<=i;j++) set(m,32+i,ROWS-3-j,2);
             for (let i=0;i<4;i++) for(let j=0;j<=i;j++) set(m,60+i,ROWS-3-j,2);
-            platf(m,[[5,ROWS-5,3],[11,ROWS-7,3],[18,ROWS-5,4],[25,ROWS-8,3],[30,ROWS-5,4],
-                [37,ROWS-6,3],[44,ROWS-4,3],[50,ROWS-7,3],[57,ROWS-5,4],[65,ROWS-6,3],
-                [72,ROWS-5,3],[78,ROWS-7,4],[84,ROWS-5,3]]);
+            // 壁
+            wall(m, 24, ROWS-3, 7);
+            set(m, 24, ROWS-5, 0);
+            wall(m, 46, ROWS-3, 6);
+            wall(m, 68, ROWS-3, 8);
+            set(m, 68, ROWS-6, 0); set(m, 68, ROWS-7, 0);
+            // 足場
+            platf(m,[[5,ROWS-5,3],[9,ROWS-8,3],[13,ROWS-5,3],[17,ROWS-7,4],
+                     [21,ROWS-10,3],[25,ROWS-6,3],[27,ROWS-9,3],[31,ROWS-5,3],
+                     [35,ROWS-7,3],[38,ROWS-10,3],[41,ROWS-5,3],[44,ROWS-8,3],
+                     [47,ROWS-6,3],[51,ROWS-5,3],[55,ROWS-8,3],[58,ROWS-10,3],
+                     [63,ROWS-6,3],[66,ROWS-8,3],[69,ROWS-10,3],
+                     [72,ROWS-5,3],[76,ROWS-7,3],[80,ROWS-5,3],
+                     [85,ROWS-6,3],[89,ROWS-4,3]]);
             platf(m, [[w-5, ROWS-4, 3]]);
             setGoal(m, w-4, ROWS-5);
             return m;
+        },
+        setupDynamic() {
+            // 穴渡りの動く床
+            movingPlatforms.push(new MovingPlatform(12*TILE, (ROWS-4)*TILE, TILE*2, 'h', 4*TILE, 0.8));
+            movingPlatforms.push(new MovingPlatform(40*TILE, (ROWS-4)*TILE, TILE*2, 'h', 3*TILE, 1.0));
+            movingPlatforms.push(new MovingPlatform(70*TILE, (ROWS-4)*TILE, TILE*2, 'h', 3*TILE, 1.2));
+            // 上下する高台アクセス
+            movingPlatforms.push(new MovingPlatform(55*TILE, (ROWS-5)*TILE, TILE*2, 'v', -4*TILE, 0.9));
+            // 崩れる足場（要所に配置）
+            crumblingBlocks.push(new CrumblingBlock(25*TILE, (ROWS-3)*TILE, TILE*2));
+            crumblingBlocks.push(new CrumblingBlock(47*TILE, (ROWS-3)*TILE, TILE*2));
+            crumblingBlocks.push(new CrumblingBlock(80*TILE, (ROWS-3)*TILE, TILE*2));
         }
     },
+    // 3-BOSS: 魔王戦。広大アリーナ + スパイク + 動く足場 + 崩れる足場
     {
         name:'魔王の玉座', stage:2, boss:3,
         bg1:'#200000', bg2:'#400800',
-        width:35,
-        enemySpawns: [{type:'boss3', col:22, row:ROWS-3}],
+        width:38,
+        enemySpawns: [{type:'boss3', col:24, row:ROWS-3}],
         generate(w) {
             const m = blank(w, ROWS);
             fillRow(m, ROWS-1, 0, w, 1); fillRow(m, ROWS-2, 0, w, 1);
-            platf(m,[[4,ROWS-5,3],[10,ROWS-7,4],[18,ROWS-5,3],[24,ROWS-6,3],[w-7,ROWS-5,3]]);
+            // スパイク帯（追い詰められエリア）
+            spikes(m, 2, ROWS-3, 3);
+            spikes(m, 16, ROWS-3, 3);
+            spikes(m, w-5, ROWS-3, 3);
+            // 中央の大穴
+            clearCols(m, 12, 4, ROWS-2, ROWS);
+            spikes(m, 12, ROWS-1, 4);
+            // 逃げ場と攻撃ポイント
+            platf(m,[[3,ROWS-5,3],[8,ROWS-7,3],[13,ROWS-9,4],[19,ROWS-5,3],
+                     [24,ROWS-7,3],[w-8,ROWS-5,3],[w-5,ROWS-7,3]]);
+            // 遮蔽壁
+            wall(m, 10, ROWS-3, 3);
+            wall(m, 22, ROWS-3, 3);
             setGoal(m, w-3, ROWS-3);
             return m;
+        },
+        setupDynamic() {
+            // 穴の上の動く床（戦闘中に渡る必要がある）
+            movingPlatforms.push(new MovingPlatform(12*TILE, (ROWS-4)*TILE, TILE*3, 'h', 2*TILE, 0.6));
+            // 崩れる足場（油断すると落ちる）
+            crumblingBlocks.push(new CrumblingBlock(8*TILE, (ROWS-3)*TILE, TILE*2));
+            crumblingBlocks.push(new CrumblingBlock(19*TILE, (ROWS-3)*TILE, TILE*2));
         }
     },
 ];
@@ -1508,6 +1948,8 @@ function blank(w, h) { return Array.from({length:h}, ()=>Array(w).fill(0)); }
 function fillRow(m, row, from, to, v) { for(let c=from;c<to&&c<m[0].length;c++) m[row][c]=v; }
 function clearCols(m,s,len,r0,r1){ for(let c=s;c<s+len;c++) for(let r=r0;r<r1;r++) m[r][c]=0; }
 function platf(m, arr) { for(const [x,y,w] of arr) for(let i=0;i<w;i++) set(m,x+i,y,2); }
+function spikes(m, col, row, len) { for(let i=0;i<len;i++) set(m,col+i,row,3); }
+function wall(m, col, row, h) { for(let i=0;i<h;i++) set(m,col,row-i,2); }
 function set(m,c,r,v){ if(r>=0&&r<m.length&&c>=0&&c<m[0].length) m[r][c]=v; }
 function setGoal(m,c,r){ set(m,c,r,5); }
 
@@ -1521,6 +1963,10 @@ function loadLevel(idx) {
     levelMap = lvl.generate(lvl.width);
 
     enemies=[]; items=[]; bullets=[]; particles=[]; enemyBullets=[]; goal=null;
+    movingPlatforms=[]; crumblingBlocks=[];
+
+    // 動的オブジェクト生成
+    if (lvl.setupDynamic) lvl.setupDynamic();
 
     // ゴール（周囲のタイルをクリアして埋まり防止）
     for (let r=0; r<levelMap.length; r++) for (let c=0; c<levelMap[r].length; c++) {
@@ -1649,7 +2095,9 @@ function updatePlayer() {
         if (!rectsOverlap({x:player.x,y:player.y,w:player.w,h:player.h}, e.rect())) continue;
         // 踏みつけ判定
         if (player.vy>1 && player.y+player.h < e.y+e.h*0.5+8) {
-            e.takeDamage(e.maxHp); // 即死
+            // ダメージ制: 通常敵60, ボスは25（ボスには踏みが通りにくい）
+            const stompDmg = (e instanceof Boss) ? 25 : 60;
+            e.takeDamage(stompDmg);
             player.vy = BASE_JUMP_FORCE*0.65;
             score += 50;
             shakeAmt = 7;
@@ -1676,7 +2124,7 @@ function updatePlayer() {
     // アイテム取得 + 磁石効果
     for (const it of items) {
         if (it.collected) continue;
-        if (player.hasMagnet) {
+        if (player.hasMagnet && !it.type.startsWith('WEAPON_')) {
             const dx = (player.x+player.w/2) - it.x;
             const dy = (player.y+player.h/2) - it.y;
             const dist = Math.sqrt(dx*dx+dy*dy);
@@ -1881,6 +2329,20 @@ function drawTiles() {
                 pxRect(sx+TILE-2, sy, 2, TILE, theme.tileSh2);
                 pxRect(sx+TILE/2-4, sy+TILE/2-4, 8, 8, theme.tileSh2);
                 px(sx+TILE/2-2, sy+TILE/2-2, 2, 2, theme.tileHi2);
+            } else if (v===3) {
+                // スパイク（ダメージ床）
+                const stageIdx = getStageIdx();
+                const spikeCol = stageIdx===0 ? '#806' : stageIdx===1 ? '#08a' : '#a40';
+                const spikeTip = stageIdx===0 ? '#f0a' : stageIdx===1 ? '#0cf' : '#f80';
+                // 底面ベース
+                pxRect(sx, sy+TILE-8, TILE, 8, spikeCol);
+                // 三角スパイク(5本)
+                for (let i = 0; i < 5; i++) {
+                    const bx = sx + i*8;
+                    pxRect(bx+2, sy+TILE-16, 4, 8, spikeCol);
+                    pxRect(bx+3, sy+TILE-20, 2, 4, spikeTip);
+                    px(bx+3, sy+TILE-22, 2, 2, '#fff');
+                }
             }
         }
     }
@@ -2519,6 +2981,9 @@ function update() {
     }
     if (state!==S.PLAY) return;
     updatePlayer();
+    updateMovingPlatforms();
+    updateCrumblingBlocks();
+    checkSpikeDamage();
     for (const e of enemies) if (e.alive) e.update();
     updateBullets();
     // 敵弾更新
@@ -2541,6 +3006,8 @@ function draw() {
     } else if (state===S.READY) {
         drawBackground();
         drawTiles();
+        for (const mp of movingPlatforms) mp.draw(cameraX);
+        for (const cb of crumblingBlocks) cb.draw(cameraX);
         drawGoal();
         for (const e of enemies) e.draw(cameraX);
         drawPlayer();
@@ -2549,6 +3016,8 @@ function draw() {
     } else if (state===S.PLAY) {
         drawBackground();
         drawTiles();
+        for (const mp of movingPlatforms) mp.draw(cameraX);
+        for (const cb of crumblingBlocks) cb.draw(cameraX);
         drawGoal();
         for (const e of enemies) e.draw(cameraX);
         for (const it of items)  it.draw(cameraX);
