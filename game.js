@@ -221,15 +221,15 @@ let gold = 0;
 let materials = 0;
 let highestLevelCleared = -1; // クリアした最高レベル
 const HUB_UPGRADES = {
-    maxHp:       { level:0, max:10, baseCost:80,  costMul:1.5, label:'最大HP',       desc:'+20 HP',         icon:'♥',  color:'#ff8844' },
-    attack:      { level:0, max:10, baseCost:100, costMul:1.6, label:'攻撃力',       desc:'+15% ダメージ',  icon:'⚔',  color:'#ff4444' },
-    moveSpeed:   { level:0, max:8,  baseCost:60,  costMul:1.4, label:'移動速度',     desc:'+8% 速度',       icon:'»',  color:'#44ffaa' },
-    jumpPower:   { level:0, max:6,  baseCost:70,  costMul:1.4, label:'跳躍力',       desc:'+6% ジャンプ',   icon:'↑',  color:'#88ffff' },
-    fireRate:    { level:0, max:8,  baseCost:90,  costMul:1.5, label:'攻撃速度',     desc:'+10% 速射',      icon:'⚡',  color:'#ffdd00' },
-    bulletSize:  { level:0, max:6,  baseCost:80,  costMul:1.4, label:'弾サイズ',     desc:'+10% 弾肥大',    icon:'◎',  color:'#ff44cc' },
-    multiShot:   { level:0, max:5,  baseCost:150, costMul:1.8, label:'弾数',         desc:'+1 弾',          icon:'◉',  color:'#00e5ff' },
-    shield:      { level:0, max:5,  baseCost:200, costMul:2.0, label:'バリア',       desc:'+20 シールド',   icon:'◇',  color:'#00ccff' },
-    extraLife:   { level:0, max:3,  baseCost:300, costMul:2.5, label:'残機',         desc:'+1 残機',        icon:'♥♥', color:'#fc0'    },
+    maxHp:       { level:0, max:10, baseCost:400,  costMul:1.5, label:'最大HP',       desc:'+20 HP',         icon:'♥',  color:'#ff8844' },
+    attack:      { level:0, max:10, baseCost:500,  costMul:1.6, label:'攻撃力',       desc:'+15% ダメージ',  icon:'⚔',  color:'#ff4444' },
+    moveSpeed:   { level:0, max:8,  baseCost:300,  costMul:1.4, label:'移動速度',     desc:'+8% 速度',       icon:'»',  color:'#44ffaa' },
+    jumpPower:   { level:0, max:6,  baseCost:350,  costMul:1.4, label:'跳躍力',       desc:'+6% ジャンプ',   icon:'↑',  color:'#88ffff' },
+    fireRate:    { level:0, max:8,  baseCost:450,  costMul:1.5, label:'攻撃速度',     desc:'+10% 速射',      icon:'⚡',  color:'#ffdd00' },
+    bulletSize:  { level:0, max:6,  baseCost:400,  costMul:1.4, label:'弾サイズ',     desc:'+10% 弾肥大',    icon:'◎',  color:'#ff44cc' },
+    multiShot:   { level:0, max:5,  baseCost:750,  costMul:1.8, label:'弾数',         desc:'+1 弾',          icon:'◉',  color:'#00e5ff' },
+    shield:      { level:0, max:5,  baseCost:1000, costMul:2.0, label:'バリア',       desc:'+20 シールド',   icon:'◇',  color:'#00ccff' },
+    extraLife:   { level:0, max:3,  baseCost:1500, costMul:2.5, label:'残機',         desc:'+1 残機',        icon:'♥♥', color:'#fc0'    },
 };
 let hubCursor = 0;
 let hubScroll = 0;
@@ -245,7 +245,7 @@ function getUpgradeCost(key) {
 }
 function getMaterialCost(key) {
     const u = HUB_UPGRADES[key];
-    return Math.floor(u.level * 2 + 3);
+    return Math.floor((u.level * 2 + 3) * 2);
 }
 
 // ---- 報酬選択（ローグライク） ----
@@ -721,6 +721,85 @@ function drawItemIcon(icon, cx, cy, color) {
     }
 }
 
+// ============================================================
+//  通貨ドロップ（物理アイテム）
+// ============================================================
+let currencyDrops = [];
+class CurrencyDrop {
+    constructor(x, y, type, amount) {
+        this.x = x; this.y = y;
+        this.type = type; // 'gold' or 'material'
+        this.amount = amount;
+        this.vy = -3 - Math.random()*3;
+        this.vx = (Math.random()-0.5)*4;
+        this.collected = false;
+        this.t = 0;
+        this.onGround = false;
+    }
+    update() {
+        this.t++;
+        if (!this.onGround) {
+            this.vy += GRAVITY;
+            this.y += this.vy;
+            this.x += this.vx;
+            this.vx *= 0.98;
+            // 地面衝突
+            const row = Math.floor((this.y+8)/TILE);
+            const col = Math.floor(this.x/TILE);
+            if (row>=0 && row<levelMap.length && col>=0 && col<(levelMap[0]||[]).length) {
+                if (levelMap[row][col]===1||levelMap[row][col]===2) {
+                    this.y = row*TILE - 8;
+                    this.vy = 0;
+                    this.onGround = true;
+                }
+            }
+            if (this.y > canvas.height + 50) this.collected = true; // 落下消滅
+        }
+        // 磁石効果（プレイヤーに引き寄せ）
+        if (player.hasMagnet || this.t > 60) {
+            const dx = (player.x+player.w/2) - this.x;
+            const dy = (player.y+player.h/2) - this.y;
+            const dist = Math.sqrt(dx*dx+dy*dy);
+            const range = player.hasMagnet ? 250 : 120;
+            if (dist < range) {
+                const spd = player.hasMagnet ? 4 : 2;
+                this.x += dx/dist * spd;
+                this.y += dy/dist * spd;
+                this.onGround = false;
+            }
+        }
+        // プレイヤーとの接触
+        if (Math.abs(player.x+player.w/2 - this.x) < 20 && Math.abs(player.y+player.h/2 - this.y) < 20) {
+            this.collected = true;
+            if (this.type === 'gold') {
+                gold += this.amount;
+                showPickupText(`+${this.amount}G`, '#fc0');
+            } else {
+                materials += this.amount;
+                showPickupText(`+${this.amount}素材`, '#8cf');
+            }
+            sfxItemPickup();
+        }
+    }
+    draw(camX) {
+        if (this.collected) return;
+        const sx = this.x - camX;
+        if (sx < -20 || sx > canvas.width+20) return;
+        const hover = Math.sin(this.t*0.1)*2;
+        if (this.type === 'gold') {
+            // コイン
+            pxRect(Math.round(sx-5), Math.round(this.y-5+hover), 10, 10, '#da0');
+            pxRect(Math.round(sx-3), Math.round(this.y-3+hover), 6, 6, '#fc0');
+            px(Math.round(sx-1), Math.round(this.y-1+hover), 2, 2, '#fe8');
+        } else {
+            // 素材（結晶）
+            pxRect(Math.round(sx-4), Math.round(this.y-6+hover), 8, 12, '#48c');
+            pxRect(Math.round(sx-2), Math.round(this.y-8+hover), 4, 4, '#6af');
+            px(Math.round(sx-1), Math.round(this.y-3+hover), 2, 2, '#adf');
+        }
+    }
+}
+
 // アイテム取得テキスト演出
 let pickupTexts = [];
 function showPickupText(text, color) {
@@ -767,17 +846,23 @@ class Enemy {
         spawnParticles(this.x+this.w/2, this.y+this.h/2, '#660000', 12, 4);
         shakeAmt = Math.max(shakeAmt, 6);
         if (Math.random() < this.dropRate) this._dropItem();
-        // ゴールド＆素材ドロップ
+        // ゴールド＆素材を物理ドロップ
+        const cx = this.x+this.w/2, cy = this.y+this.h/2;
         const stageMultiplier = 1 + getStageIdx() * 0.8;
         const baseGold = (this.scoreVal || 100) / 10;
-        const earnedGold = Math.floor(baseGold * stageMultiplier * (0.8 + Math.random() * 0.4));
-        gold += earnedGold;
+        const goldAmt = Math.floor(baseGold * stageMultiplier * (0.8 + Math.random() * 0.4));
+        // ゴールドを複数コインに分割ドロップ
+        const coinCount = Math.min(5, Math.max(1, Math.floor(goldAmt / 3)));
+        const perCoin = Math.ceil(goldAmt / coinCount);
+        for (let i=0; i<coinCount; i++) {
+            const amt = (i === coinCount-1) ? goldAmt - perCoin*(coinCount-1) : perCoin;
+            if (amt > 0) currencyDrops.push(new CurrencyDrop(cx, cy, 'gold', amt));
+        }
+        // 素材ドロップ
         if (Math.random() < 0.3 + getStageIdx() * 0.1) {
             const mat = Math.floor((1 + getStageIdx()) * (0.5 + Math.random() * 1.0));
-            materials += mat;
-            showPickupText(`+${mat}素材`, '#8cf');
+            currencyDrops.push(new CurrencyDrop(cx, cy, 'material', mat));
         }
-        showPickupText(`+${earnedGold}G`, '#fc0');
     }
     _dropItem() {
         const rolled = rollItemWithRarity();
@@ -2117,7 +2202,7 @@ function loadLevel(idx) {
     levelMap = lvl.generate(lvl.width);
 
     enemies=[]; items=[]; bullets=[]; particles=[]; enemyBullets=[]; goal=null;
-    movingPlatforms=[]; crumblingBlocks=[];
+    movingPlatforms=[]; crumblingBlocks=[]; currencyDrops=[];
 
     // 動的オブジェクト生成
     if (lvl.setupDynamic) lvl.setupDynamic();
@@ -2302,13 +2387,9 @@ function updatePlayer() {
         score += 500;
         sfxGoal();
         spawnParticles(player.x+player.w/2,player.y,'#f1c40f',20,5);
-        // ステージ報酬計算
-        const stgMul = 1 + getStageIdx() * 0.6;
-        stageRewardGold = Math.floor((200 + score * 0.1) * stgMul);
-        stageRewardMaterials = Math.floor((5 + getStageIdx() * 3) * (0.8 + Math.random() * 0.4));
         if (currentLevelIdx > highestLevelCleared) highestLevelCleared = currentLevelIdx;
         currentLevelIdx++;
-        if (currentLevelIdx >= LEVELS.length) { state=S.CLEAR; stopBGM(); gold += stageRewardGold; materials += stageRewardMaterials; }
+        if (currentLevelIdx >= LEVELS.length) { state=S.CLEAR; stopBGM(); }
         else { enterRewardScreen(); }
     }
 
@@ -2861,11 +2942,8 @@ function applyReward() {
     const def = ITEM_DEFS[t];
     const rd = RARITY_DEFS[r];
     showPickupText(`${rd.label} ${def.label}`, rd.color);
-    // ゴールド・素材獲得してハブに戻る
-    gold += stageRewardGold;
-    materials += stageRewardMaterials;
-    stopBGM();
-    enterHub();
+    // 次のレベルへ進む（ゲームオーバーまで継続）
+    loadLevel(currentLevelIdx);
 }
 
 function drawReward() {
@@ -2879,10 +2957,6 @@ function drawReward() {
     ctx.fillStyle='#fc0'; ctx.font='bold 26px monospace';
     ctx.fillText('LEVEL CLEAR!', canvas.width/2, 45);
     pxRect(canvas.width/2-130, 53, 260, 3, '#a80');
-
-    // 獲得報酬表示
-    ctx.fillStyle='#fc0'; ctx.font='bold 14px monospace';
-    ctx.fillText(`+${stageRewardGold}G  +${stageRewardMaterials}素材`, canvas.width/2, 72);
 
     ctx.fillStyle='#aaa'; ctx.font='14px monospace';
     ctx.fillText('報酬を1つ選べ（←→で選択、SPACEで決定）', canvas.width/2, 95);
@@ -3002,52 +3076,124 @@ function drawClear() {
 }
 
 // ============================================================
-//  拠点（ハブ）画面
+//  拠点（村マップ）システム
 // ============================================================
+let hubSelectedLevel = 0;
+let villageMap = [];
+const VILLAGE_W = 40; // 村の幅(タイル)
+const VILLAGE_H = ROWS;
+// NPC定義
+const NPCS = [
+    { id:'blacksmith', name:'鍛冶屋', x:8*TILE, y:(ROWS-4)*TILE, w:30, h:40,
+      color:'#c64', bodyColor:'#842', upgrades:['attack','fireRate','bulletSize','multiShot'],
+      greeting:'武器を鍛えてやろう。', icon:'⚒' },
+    { id:'trainer', name:'訓練士', x:16*TILE, y:(ROWS-4)*TILE, w:30, h:40,
+      color:'#4a8', bodyColor:'#264', upgrades:['maxHp','moveSpeed','jumpPower','extraLife'],
+      greeting:'体を鍛えるか？', icon:'💪' },
+    { id:'mage', name:'魔術師', x:24*TILE, y:(ROWS-4)*TILE, w:30, h:40,
+      color:'#84c', bodyColor:'#428', upgrades:['shield'],
+      greeting:'防御魔法をかけてやろう...', icon:'✦' },
+];
+// 村の出口ゲート位置
+const GATE_X = (VILLAGE_W - 3) * TILE;
+// 会話UI状態
+let talkingTo = null;     // 現在会話中のNPC
+let shopCursor = 0;
+let shopScroll = 0;
+
+function setupVillageMap() {
+    // 村マップ生成
+    villageMap = blank(VILLAGE_W, VILLAGE_H);
+    // 地面
+    fillRow(villageMap, ROWS-1, 0, VILLAGE_W, 1);
+    fillRow(villageMap, ROWS-2, 0, VILLAGE_W, 1);
+    // 屋根付きの建物（鍛冶屋エリア）
+    for (let c=6;c<11;c++) set(villageMap,c,ROWS-6,2);
+    wall(villageMap, 6, ROWS-3, 3);
+    wall(villageMap, 10, ROWS-3, 3);
+    // 訓練場
+    for (let c=14;c<19;c++) set(villageMap,c,ROWS-6,2);
+    wall(villageMap, 14, ROWS-3, 3);
+    wall(villageMap, 18, ROWS-3, 3);
+    // 魔術師の塔
+    for (let c=22;c<27;c++) set(villageMap,c,ROWS-7,2);
+    wall(villageMap, 22, ROWS-3, 4);
+    wall(villageMap, 26, ROWS-3, 4);
+    // 出口ゲート（右端の門）
+    wall(villageMap, VILLAGE_W-2, ROWS-3, 5);
+    wall(villageMap, VILLAGE_W-4, ROWS-3, 5);
+    // 足場（装飾）
+    platf(villageMap, [[3,ROWS-5,2],[30,ROWS-5,3],[34,ROWS-4,2]]);
+
+    // プレイヤー初期位置
+    player.x = 2*TILE; player.y = (ROWS-4)*TILE;
+    player.vx = 0; player.vy = 0; player.onGround = false;
+    cameraX = 0;
+    levelMap = villageMap;
+    talkingTo = null;
+    shopCursor = 0;
+    shopScroll = 0;
+}
+
 function handleHubKey(e) {
-    const upgradeKeys = Object.keys(HUB_UPGRADES);
-    const totalItems = upgradeKeys.length + 1; // +1 for "出撃" button
-    const maxVisible = 9;
-    if (e.code === 'ArrowUp' || e.code === 'KeyW') {
-        hubCursor = Math.max(0, hubCursor - 1);
-        if (hubCursor < hubScroll) hubScroll = hubCursor;
+    if (talkingTo) {
+        // ショップUI操作
+        const items = talkingTo.upgrades;
+        if (e.code === 'Escape' || e.code === 'KeyQ') {
+            talkingTo = null; return;
+        }
+        if (e.code === 'ArrowUp' || e.code === 'KeyW') shopCursor = Math.max(0, shopCursor-1);
+        if (e.code === 'ArrowDown' || e.code === 'KeyS') shopCursor = Math.min(items.length-1, shopCursor+1);
+        if (e.code === 'Space' || e.code === 'Enter') {
+            purchaseUpgrade(items[shopCursor]);
+        }
+        return;
     }
-    if (e.code === 'ArrowDown' || e.code === 'KeyS') {
-        hubCursor = Math.min(totalItems - 1, hubCursor + 1);
-        if (hubCursor >= hubScroll + maxVisible) hubScroll = hubCursor - maxVisible + 1;
-    }
-    if (e.code === 'Space' || e.code === 'Enter') {
-        if (hubCursor >= upgradeKeys.length) {
-            // 出撃: ステージ選択（次の未クリアステージへ）
+    // 村でのW/Space: ジャンプは通常処理（keys経由）
+    // E/Enter: NPC会話 or ゲート出撃
+    if (e.code === 'KeyE' || e.code === 'Enter') {
+        // NPC近くにいるか判定
+        for (const npc of NPCS) {
+            const dx = Math.abs((player.x+player.w/2) - (npc.x+npc.w/2));
+            const dy = Math.abs((player.y+player.h/2) - (npc.y+npc.h/2));
+            if (dx < 50 && dy < 50) {
+                talkingTo = npc;
+                shopCursor = 0;
+                shopScroll = 0;
+                return;
+            }
+        }
+        // ゲート付近か判定
+        if (player.x > GATE_X - 60) {
             const nextLevel = Math.min(highestLevelCleared + 1, LEVELS.length - 1);
-            startStage(nextLevel);
-        } else {
-            purchaseUpgrade(upgradeKeys[hubCursor]);
+            startStage(hubSelectedLevel);
         }
     }
-    // 左右で出撃先レベル選択
-    if (hubCursor >= upgradeKeys.length) {
-        if (e.code === 'ArrowLeft' || e.code === 'KeyA') hubSelectedLevel = Math.max(0, hubSelectedLevel - 1);
-        if (e.code === 'ArrowRight' || e.code === 'KeyD') hubSelectedLevel = Math.min(Math.min(highestLevelCleared + 1, LEVELS.length - 1), hubSelectedLevel + 1);
+    // ゲート付近でShift+左右でステージ選択
+    if (player.x > GATE_X - 80) {
+        if (e.code === 'ArrowUp' || e.code === 'PageUp') {
+            hubSelectedLevel = Math.min(Math.min(highestLevelCleared + 1, LEVELS.length - 1), hubSelectedLevel + 1);
+        }
+        if (e.code === 'ArrowDown' || e.code === 'PageDown') {
+            hubSelectedLevel = Math.max(0, hubSelectedLevel - 1);
+        }
     }
 }
-let hubSelectedLevel = 0;
 
 function handleHubClick() {
-    const upgradeKeys = Object.keys(HUB_UPGRADES);
-    const listX = 200, listY = 130, rowH = 36;
-    const maxVisible = 9;
-    const clickRow = Math.floor((mouse.y - listY) / rowH);
-    if (clickRow >= 0 && clickRow < maxVisible) {
-        const idx = hubScroll + clickRow;
-        if (idx < upgradeKeys.length) {
-            hubCursor = idx;
-            purchaseUpgrade(upgradeKeys[idx]);
-        } else if (idx === upgradeKeys.length) {
-            hubCursor = idx;
-            const nextLevel = Math.min(hubSelectedLevel, Math.min(highestLevelCleared + 1, LEVELS.length - 1));
-            startStage(nextLevel);
+    if (talkingTo) {
+        // ショップアイテムクリック
+        const items = talkingTo.upgrades;
+        const panelX = canvas.width/2 - 180, panelY = 120;
+        const rowH = 50;
+        const clickRow = Math.floor((mouse.y - panelY) / rowH);
+        if (clickRow >= 0 && clickRow < items.length) {
+            shopCursor = clickRow;
+            purchaseUpgrade(items[clickRow]);
         }
+        // 閉じるボタン
+        if (mouse.y > canvas.height - 40) talkingTo = null;
+        return;
     }
 }
 
@@ -3064,95 +3210,178 @@ function purchaseUpgrade(key) {
     sfxItemPickup();
 }
 
-function drawHub() {
-    ctx.fillStyle='#060610'; ctx.fillRect(0,0,canvas.width,canvas.height);
-    // 背景装飾
-    for (let i=0;i<20;i++) {
-        const bx = (i*131+40)%canvas.width, by = (i*89+30)%canvas.height;
-        if (Math.floor((Date.now()/300+i)%3)<2) px(bx, by, 1, 1, '#334');
+function updateHub() {
+    // 村でのプレイヤー移動（通常のプレイヤー操作を流用）
+    const moveSpd = BASE_MOVE_SPEED * 1.0;
+    if (!talkingTo) {
+        if (keys['KeyA']||keys['ArrowLeft'])  player.vx -= moveSpd;
+        if (keys['KeyD']||keys['ArrowRight']) player.vx += moveSpd;
+        const jumpPressed = keys['KeyW']||keys['ArrowUp']||keys['Space'];
+        if (jumpPressed && !player._jumpHeld && player.onGround) {
+            player.vy = BASE_JUMP_FORCE;
+            sfxJump();
+        }
+        player._jumpHeld = jumpPressed;
     }
-    // タイトル
-    ctx.textAlign='center';
-    ctx.fillStyle='#a8f'; ctx.font='bold 28px monospace';
-    ctx.fillText('DARK ABYSS - 拠点', canvas.width/2, 40);
-    pxRect(canvas.width/2-180, 48, 360, 3, '#648');
-
-    // 所持金
-    ctx.fillStyle='#fc0'; ctx.font='bold 16px monospace';
-    ctx.fillText(`所持金: ${gold}G   素材: ${materials}`, canvas.width/2, 75);
-
-    // クリア状況
-    ctx.fillStyle='#8a8'; ctx.font='12px monospace';
-    const cleared = highestLevelCleared >= 0 ? `Stage${Math.floor(highestLevelCleared/4)+1}-${(highestLevelCleared%4)+1} クリア済` : '未クリア';
-    ctx.fillText(cleared, canvas.width/2, 95);
-
-    // アップグレードリスト
-    const upgradeKeys = Object.keys(HUB_UPGRADES);
-    const listX = 200, listY = 130, rowH = 36;
-    const maxVisible = 9;
-
-    ctx.textAlign='left';
-    for (let i = 0; i < maxVisible; i++) {
-        const idx = hubScroll + i;
-        if (idx > upgradeKeys.length) break; // +1 for sortie button
-        const y = listY + i * rowH;
-        const isSel = (idx === hubCursor);
-
-        if (idx < upgradeKeys.length) {
-            const key = upgradeKeys[idx];
-            const u = HUB_UPGRADES[key];
-            const gCost = getUpgradeCost(key);
-            const mCost = getMaterialCost(key);
-            const maxed = u.level >= u.max;
-
-            if (isSel) {
-                pxRect(listX - 8, y - 2, 570, rowH, '#1a1a2e');
-                pxRect(listX - 8, y - 2, 3, rowH, u.color);
-            }
-            // アイコン
-            ctx.fillStyle = u.color; ctx.font = 'bold 16px monospace';
-            ctx.fillText(u.icon, listX, y + 16);
-            // 名前
-            ctx.fillStyle = u.color; ctx.font = 'bold 13px monospace';
-            ctx.fillText(u.label, listX + 30, y + 14);
-            // レベル
-            ctx.fillStyle = '#ccc'; ctx.font = '12px monospace';
-            ctx.fillText(`Lv${u.level}/${u.max}`, listX + 130, y + 14);
-            // レベルバー
-            const barW = 80;
-            pxRect(listX + 185, y + 6, barW, 8, '#222');
-            pxRect(listX + 185, y + 6, Math.round(barW * u.level / u.max), 8, u.color);
-            // 効果
-            ctx.fillStyle = '#888'; ctx.font = '11px monospace';
-            ctx.fillText(u.desc, listX + 275, y + 14);
-            // コスト
-            if (maxed) {
-                ctx.fillStyle = '#4a4'; ctx.font = 'bold 11px monospace';
-                ctx.fillText('MAX', listX + 395, y + 14);
-            } else {
-                const canBuy = gold >= gCost && materials >= mCost;
-                ctx.fillStyle = canBuy ? '#fc0' : '#644'; ctx.font = '11px monospace';
-                ctx.fillText(`${gCost}G ${mCost}素材`, listX + 380, y + 14);
-            }
-            // 説明
-            ctx.fillStyle = '#556'; ctx.font = '10px monospace';
-            ctx.fillText(`次: ${u.desc}`, listX + 30, y + 28);
-        } else {
-            // 出撃ボタン
-            if (isSel) {
-                pxRect(listX - 8, y - 2, 570, rowH, '#2a1a1e');
-                pxRect(listX - 8, y - 2, 3, rowH, '#f44');
-            }
-            const nextLevel = Math.min(hubSelectedLevel, Math.min(highestLevelCleared + 1, LEVELS.length - 1));
-            const stg = Math.floor(nextLevel / 4) + 1;
-            const lvlInStg = (nextLevel % 4) + 1;
-            const isBoss = !!LEVELS[nextLevel].boss;
-            ctx.fillStyle = '#f44'; ctx.font = 'bold 16px monospace';
-            ctx.fillText(`▶ 出撃: Stage${stg}-${isBoss?'BOSS':lvlInStg} ${LEVELS[nextLevel].name}`, listX, y + 16);
-            ctx.fillStyle = '#888'; ctx.font = '11px monospace';
-            ctx.fillText('←→でステージ選択  SPACE/Enterで出撃', listX, y + 30);
+    player.vy += GRAVITY;
+    player.vx *= FRICTION;
+    player.vx = Math.max(-4, Math.min(4, player.vx));
+    player.vy = Math.max(-10, Math.min(7, player.vy));
+    // X移動
+    player.x += player.vx;
+    for (const t of getTilesAround(player.x, player.y, player.w, player.h)) {
+        if (rectsOverlap({x:player.x,y:player.y,w:player.w,h:player.h}, t)) {
+            if (player.vx>0) player.x=t.x-player.w; else player.x=t.x+t.w;
+            player.vx=0;
         }
     }
+    // Y移動
+    player.y += player.vy;
+    player.onGround = false;
+    for (const t of getTilesAround(player.x, player.y, player.w, player.h)) {
+        if (rectsOverlap({x:player.x,y:player.y,w:player.w,h:player.h}, t)) {
+            if (player.vy>0) { player.y=t.y-player.h; player.vy=0; player.onGround=true; }
+            else { player.y=t.y+t.h; player.vy=0; }
+        }
+    }
+    // マップ内に制限
+    player.x = Math.max(0, Math.min((VILLAGE_W-1)*TILE - player.w, player.x));
+    if (player.y > canvas.height) { player.y = (ROWS-4)*TILE; player.vy = 0; }
+    // 歩行アニメ
+    if (Math.abs(player.vx) > 0.5) player.animTimer += 0.1;
+    player.facing = player.vx > 0.1 ? 1 : player.vx < -0.1 ? -1 : player.facing;
+    // カメラ
+    const target = player.x - canvas.width/3;
+    const maxCam = VILLAGE_W * TILE - canvas.width;
+    cameraX += (target - cameraX)*0.1;
+    cameraX = Math.max(0, Math.min(maxCam, cameraX));
+}
+
+function drawHub() {
+    // 村の背景
+    ctx.fillStyle='#0a0816'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle='#100c20'; ctx.fillRect(0,canvas.height/2,canvas.width,canvas.height/2);
+    // 星
+    for (let i=0;i<20;i++) {
+        const bx = ((i*137+50)%(canvas.width+200))-100 - Math.round(cameraX*0.05)%200;
+        const by = (i*89+30)%canvas.height;
+        if (Math.floor((Date.now()/400+i)%3)<2) px(bx, by, 1, 1, '#446');
+    }
+    // タイル描画（村マップ）
+    const theme = STAGE_THEMES[0]; // 村用テーマ
+    const s0=Math.floor(cameraX/TILE), s1=s0+COLS+2;
+    for (let r=0;r<villageMap.length;r++) {
+        for (let c=s0;c<=s1&&c<(villageMap[r]||[]).length;c++) {
+            if (c<0) continue;
+            const v=villageMap[r][c]; if (!v) continue;
+            const sx=Math.round(c*TILE-cameraX), sy=r*TILE;
+            if (v===1) {
+                pxRect(sx, sy, TILE, TILE, '#443');
+                pxRect(sx, sy, TILE, 2, '#665');
+                pxRect(sx, sy+TILE-2, TILE, 2, '#221');
+                const off = (r%2)*(TILE/2);
+                pxRect(sx+((TILE/4+off)%TILE), sy, 2, TILE/2, '#332');
+                pxRect(sx+((TILE*3/4+off)%TILE), sy+TILE/2, 2, TILE/2, '#332');
+            } else if (v===2) {
+                pxRect(sx, sy, TILE, TILE, '#556');
+                pxRect(sx, sy, TILE, 2, '#778');
+                pxRect(sx, sy+TILE-2, TILE, 2, '#334');
+            }
+        }
+    }
+    // 建物の看板
+    const signs = [
+        { x:8*TILE, y:(ROWS-7)*TILE, text:'鍛冶屋', color:'#f84' },
+        { x:16*TILE, y:(ROWS-7)*TILE, text:'訓練場', color:'#4f8' },
+        { x:24*TILE, y:(ROWS-8)*TILE, text:'魔術師', color:'#c8f' },
+    ];
+    for (const s of signs) {
+        const sx = Math.round(s.x - cameraX);
+        if (sx < -80 || sx > canvas.width+80) continue;
+        pxRect(sx-2, s.y-2, 64, 16, '#111');
+        ctx.fillStyle=s.color; ctx.font='bold 10px monospace'; ctx.textAlign='center';
+        ctx.fillText(s.text, sx+30, s.y+10);
+        ctx.textAlign='left';
+    }
+    // NPC描画
+    for (const npc of NPCS) {
+        const sx = Math.round(npc.x - cameraX);
+        const sy = Math.round(npc.y);
+        if (sx < -40 || sx > canvas.width+40) continue;
+        const bob = Math.round(Math.sin(Date.now()*0.002 + npc.x)*2);
+        // 体
+        pxRect(sx+4, sy+bob, 22, 12, npc.color); // 頭
+        pxRect(sx+2, sy+12+bob, 26, 20, npc.bodyColor); // 胴体
+        pxRect(sx+6, sy+32+bob, 8, 8, npc.bodyColor); // 左脚
+        pxRect(sx+16, sy+32+bob, 8, 8, npc.bodyColor); // 右脚
+        // 目
+        px(sx+8, sy+4+bob, 3, 3, '#fff');
+        px(sx+18, sy+4+bob, 3, 3, '#fff');
+        // 名前
+        ctx.fillStyle=npc.color; ctx.font='bold 10px monospace'; ctx.textAlign='center';
+        ctx.fillText(npc.name, sx+15, sy-6+bob);
+        ctx.textAlign='left';
+        // 近くにいるとき「E」表示
+        const dx = Math.abs((player.x+player.w/2)-(npc.x+npc.w/2));
+        const dy = Math.abs((player.y+player.h/2)-(npc.y+npc.h/2));
+        if (dx < 50 && dy < 50) {
+            const blink = Math.floor(Date.now()/400)%2;
+            if (blink) {
+                ctx.fillStyle='#fc0'; ctx.font='bold 12px monospace'; ctx.textAlign='center';
+                ctx.fillText('[E] 話す', sx+15, sy-18+bob);
+                ctx.textAlign='left';
+            }
+        }
+    }
+    // 出口ゲート描画
+    const gsx = Math.round(GATE_X - cameraX);
+    // 門柱
+    pxRect(gsx-4, (ROWS-8)*TILE, 8, 6*TILE, '#644');
+    pxRect(gsx+3*TILE-4, (ROWS-8)*TILE, 8, 6*TILE, '#644');
+    // 門の上
+    pxRect(gsx, (ROWS-8)*TILE, 3*TILE, 8, '#866');
+    pxRect(gsx, (ROWS-8)*TILE+8, 3*TILE, 4, '#644');
+    // テキスト
+    ctx.fillStyle='#f44'; ctx.font='bold 11px monospace'; ctx.textAlign='center';
+    ctx.fillText('出口 →', gsx+1.5*TILE, (ROWS-9)*TILE+10);
+    // ステージ表示
+    const nextLevel = Math.min(hubSelectedLevel, Math.min(highestLevelCleared + 1, LEVELS.length - 1));
+    const stg = Math.floor(nextLevel / 4) + 1;
+    const lvlInStg = (nextLevel % 4) + 1;
+    const isBoss = !!LEVELS[nextLevel].boss;
+    ctx.fillStyle='#fa8'; ctx.font='10px monospace';
+    ctx.fillText(`Stage${stg}-${isBoss?'BOSS':lvlInStg}`, gsx+1.5*TILE, (ROWS-9)*TILE+24);
+    ctx.textAlign='left';
+    // 近くにいると案内
+    if (player.x > GATE_X - 60) {
+        const blink = Math.floor(Date.now()/400)%2;
+        if (blink) {
+            ctx.fillStyle='#fc0'; ctx.font='bold 12px monospace'; ctx.textAlign='center';
+            ctx.fillText('[E] 出撃  [←→] ステージ選択', gsx+1.5*TILE, (ROWS-4)*TILE-10);
+            ctx.textAlign='left';
+        }
+    }
+    // プレイヤー描画
+    drawPlayer();
+    // HUD（上部に所持金・素材表示）
+    pxRect(4,4,260,24, 'rgba(0,0,0,0.7)');
+    ctx.fillStyle='#fc0'; ctx.font='bold 13px monospace';
+    ctx.fillText(`${gold}G`, 12, 20);
+    ctx.fillStyle='#8cf'; ctx.font='bold 13px monospace';
+    ctx.fillText(`素材 ${materials}`, 100, 20);
+    // クリア状況
+    const cleared = highestLevelCleared >= 0 ? `Stage${Math.floor(highestLevelCleared/4)+1}-${(highestLevelCleared%4)+1}済` : '';
+    ctx.fillStyle='#8a8'; ctx.font='11px monospace';
+    ctx.fillText(cleared, 190, 20);
+
+    // 操作ヒント
+    pxRect(canvas.width/2-160, canvas.height-22, 320, 18, 'rgba(0,0,0,0.6)');
+    ctx.fillStyle='#556'; ctx.font='10px monospace'; ctx.textAlign='center';
+    ctx.fillText('AD/←→:移動  W/↑/Space:ジャンプ  E/Enter:話す/出撃  F1:デバッグ', canvas.width/2, canvas.height-8);
+    ctx.textAlign='left';
+
+    // ショップUI（NPC会話中）
+    if (talkingTo) drawShopUI();
 
     // メッセージ
     if (hubMessageTimer > 0) {
@@ -3160,14 +3389,79 @@ function drawHub() {
         ctx.textAlign='center';
         ctx.fillStyle = '#fff'; ctx.font = 'bold 14px monospace';
         ctx.globalAlpha = Math.min(1, hubMessageTimer / 30);
-        ctx.fillText(hubMessage, canvas.width/2, canvas.height - 30);
+        ctx.fillText(hubMessage, canvas.width/2, canvas.height - 50);
         ctx.globalAlpha = 1;
+        ctx.textAlign='left';
     }
+}
 
-    // 操作説明
+function drawShopUI() {
+    const npc = talkingTo;
+    if (!npc) return;
+    // 半透明背景
+    ctx.fillStyle='rgba(0,0,0,0.75)';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    // パネル
+    const panelX = canvas.width/2-200, panelY = 50, panelW = 400, panelH = 420;
+    pxRect(panelX, panelY, panelW, panelH, '#111');
+    pxRect(panelX, panelY, panelW, 3, npc.color);
+    pxRect(panelX, panelY+panelH-3, panelW, 3, npc.color);
+    pxRect(panelX, panelY, 3, panelH, npc.color);
+    pxRect(panelX+panelW-3, panelY, 3, panelH, npc.color);
+    // NPC名＆挨拶
     ctx.textAlign='center';
-    ctx.fillStyle='#445'; ctx.font='11px monospace';
-    ctx.fillText('↑↓: 選択  SPACE/Enter: 購入/出撃  F1: デバッグ', canvas.width/2, canvas.height - 10);
+    ctx.fillStyle=npc.color; ctx.font='bold 18px monospace';
+    ctx.fillText(`${npc.icon} ${npc.name}`, canvas.width/2, panelY+28);
+    ctx.fillStyle='#aaa'; ctx.font='12px monospace';
+    ctx.fillText(npc.greeting, canvas.width/2, panelY+48);
+    // 所持金
+    ctx.fillStyle='#fc0'; ctx.font='bold 12px monospace';
+    ctx.fillText(`所持金: ${gold}G  素材: ${materials}`, canvas.width/2, panelY+68);
+    pxRect(panelX+10, panelY+75, panelW-20, 2, '#333');
+    // アップグレードリスト
+    const items = npc.upgrades;
+    const listY = panelY + 90;
+    const rowH = 50;
+    ctx.textAlign='left';
+    for (let i = 0; i < items.length; i++) {
+        const key = items[i];
+        const u = HUB_UPGRADES[key];
+        const y = listY + i * rowH;
+        const isSel = (i === shopCursor);
+        const gCost = getUpgradeCost(key);
+        const mCost = getMaterialCost(key);
+        const maxed = u.level >= u.max;
+        if (isSel) {
+            pxRect(panelX+8, y-2, panelW-16, rowH-4, '#1a1a2e');
+            pxRect(panelX+8, y-2, 3, rowH-4, u.color);
+        }
+        // アイコン＋名前
+        ctx.fillStyle=u.color; ctx.font='bold 14px monospace';
+        ctx.fillText(`${u.icon} ${u.label}`, panelX+20, y+16);
+        // レベル
+        ctx.fillStyle='#ccc'; ctx.font='12px monospace';
+        ctx.fillText(`Lv${u.level}/${u.max}`, panelX+150, y+16);
+        // レベルバー
+        const barW = 70;
+        pxRect(panelX+210, y+8, barW, 8, '#222');
+        pxRect(panelX+210, y+8, Math.round(barW * u.level / u.max), 8, u.color);
+        // コスト
+        if (maxed) {
+            ctx.fillStyle='#4a4'; ctx.font='bold 12px monospace';
+            ctx.fillText('MAX', panelX+295, y+16);
+        } else {
+            const canBuy = gold >= gCost && materials >= mCost;
+            ctx.fillStyle = canBuy ? '#fc0' : '#644'; ctx.font='11px monospace';
+            ctx.fillText(`${gCost}G ${mCost}素材`, panelX+290, y+16);
+        }
+        // 効果
+        ctx.fillStyle='#888'; ctx.font='10px monospace';
+        ctx.fillText(u.desc, panelX+20, y+34);
+    }
+    // 閉じるヒント
+    ctx.textAlign='center';
+    ctx.fillStyle='#666'; ctx.font='11px monospace';
+    ctx.fillText('↑↓: 選択  SPACE/Enter: 購入  ESC/Q: 閉じる', canvas.width/2, panelY+panelH-12);
     ctx.textAlign='left';
 }
 
@@ -3303,8 +3597,10 @@ function drawDebugMenu() {
 function enterHub() {
     stopBGM();
     state = S.HUB;
-    hubCursor = 0;
-    hubScroll = 0;
+    shakeAmt = 0; // 揺れリセット
+    hubSelectedLevel = Math.min(highestLevelCleared + 1, LEVELS.length - 1);
+    // 村マップ生成
+    setupVillageMap();
 }
 
 function startStage(levelIdx) {
@@ -3342,6 +3638,10 @@ function resetGame() { stopBGM(); enterHub(); }
 //  メインループ
 // ============================================================
 function update() {
+    if (state===S.HUB) {
+        updateHub();
+        return;
+    }
     if (state===S.READY) {
         readyTimer--;
         if (readyTimer<=0) state=S.PLAY;
@@ -3358,6 +3658,8 @@ function update() {
     for (const eb of enemyBullets) if (eb.alive) eb.update();
     enemyBullets = enemyBullets.filter(b=>b.alive);
     for (const it of items) if (!it.collected) it.update();
+    for (const cd of currencyDrops) if (!cd.collected) cd.update();
+    currencyDrops = currencyDrops.filter(c=>!c.collected);
     particles=particles.filter(p=>p.life>0);
     for (const p of particles) p.update();
     if (shakeAmt>0.5) shakeAmt*=0.75; else shakeAmt=0;
@@ -3389,6 +3691,7 @@ function draw() {
         drawGoal();
         for (const e of enemies) e.draw(cameraX);
         for (const it of items)  it.draw(cameraX);
+        for (const cd of currencyDrops) cd.draw(cameraX);
         for (const b of bullets) b.draw(cameraX);
         for (const eb of enemyBullets) eb.draw(cameraX);
         for (const p of particles) p.draw(cameraX);
