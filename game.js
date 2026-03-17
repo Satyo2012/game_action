@@ -3084,50 +3084,43 @@ const VILLAGE_W = 40; // 村の幅(タイル)
 const VILLAGE_H = ROWS;
 // NPC定義
 const NPCS = [
-    { id:'blacksmith', name:'鍛冶屋', x:8*TILE, y:(ROWS-4)*TILE, w:30, h:40,
+    { id:'blacksmith', name:'鍛冶屋', x:7*TILE, y:0, w:30, h:40,
       color:'#c64', bodyColor:'#842', upgrades:['attack','fireRate','bulletSize','multiShot'],
       greeting:'武器を鍛えてやろう。', icon:'⚒' },
-    { id:'trainer', name:'訓練士', x:16*TILE, y:(ROWS-4)*TILE, w:30, h:40,
+    { id:'trainer', name:'訓練士', x:17*TILE, y:0, w:30, h:40,
       color:'#4a8', bodyColor:'#264', upgrades:['maxHp','moveSpeed','jumpPower','extraLife'],
       greeting:'体を鍛えるか？', icon:'💪' },
-    { id:'mage', name:'魔術師', x:24*TILE, y:(ROWS-4)*TILE, w:30, h:40,
+    { id:'mage', name:'魔術師', x:27*TILE, y:0, w:30, h:40,
       color:'#84c', bodyColor:'#428', upgrades:['shield'],
       greeting:'防御魔法をかけてやろう...', icon:'✦' },
 ];
 // 村の出口ゲート位置
-const GATE_X = (VILLAGE_W - 3) * TILE;
+const GATE_X = (VILLAGE_W - 4) * TILE;
 // 会話UI状態
 let talkingTo = null;     // 現在会話中のNPC
 let shopCursor = 0;
 let shopScroll = 0;
 
 function setupVillageMap() {
-    // 村マップ生成
+    // 村マップ生成 — 地面のみ、壁なし（建物は描画のみ）
     villageMap = blank(VILLAGE_W, VILLAGE_H);
-    // 地面
+    // 地面（石畳風: 全面フラット）
     fillRow(villageMap, ROWS-1, 0, VILLAGE_W, 1);
     fillRow(villageMap, ROWS-2, 0, VILLAGE_W, 1);
-    // 屋根付きの建物（鍛冶屋エリア）
-    for (let c=6;c<11;c++) set(villageMap,c,ROWS-6,2);
-    wall(villageMap, 6, ROWS-3, 3);
-    wall(villageMap, 10, ROWS-3, 3);
-    // 訓練場
-    for (let c=14;c<19;c++) set(villageMap,c,ROWS-6,2);
-    wall(villageMap, 14, ROWS-3, 3);
-    wall(villageMap, 18, ROWS-3, 3);
-    // 魔術師の塔
-    for (let c=22;c<27;c++) set(villageMap,c,ROWS-7,2);
-    wall(villageMap, 22, ROWS-3, 4);
-    wall(villageMap, 26, ROWS-3, 4);
-    // 出口ゲート（右端の門）
-    wall(villageMap, VILLAGE_W-2, ROWS-3, 5);
-    wall(villageMap, VILLAGE_W-4, ROWS-3, 5);
-    // 足場（装飾）
-    platf(villageMap, [[3,ROWS-5,2],[30,ROWS-5,3],[34,ROWS-4,2]]);
 
-    // プレイヤー初期位置
-    player.x = 2*TILE; player.y = (ROWS-4)*TILE;
+    // NPCのY座標を地面に合わせる
+    for (const npc of NPCS) {
+        npc.y = (ROWS-2)*TILE - npc.h;
+    }
+
+    // プレイヤー初期位置（しっかりリセット）
+    player.x = 2*TILE; player.y = (ROWS-3)*TILE;
     player.vx = 0; player.vy = 0; player.onGround = false;
+    player.invincible = 0;
+    player.hp = player.maxHp || 100;
+    player.stomping = false;
+    player._jumpHeld = false;
+    player.facing = 1;
     cameraX = 0;
     levelMap = villageMap;
     talkingTo = null;
@@ -3164,9 +3157,9 @@ function handleHubKey(e) {
             }
         }
         // ゲート付近か判定
-        if (player.x > GATE_X - 60) {
-            const nextLevel = Math.min(highestLevelCleared + 1, LEVELS.length - 1);
-            startStage(hubSelectedLevel);
+        if (player.x > GATE_X - 80) {
+            const safeLevel = Math.min(hubSelectedLevel, Math.min(highestLevelCleared + 1, LEVELS.length - 1));
+            startStage(Math.max(0, safeLevel));
         }
     }
     // ゲート付近でShift+左右でステージ選択
@@ -3258,129 +3251,179 @@ function updateHub() {
 }
 
 function drawHub() {
-    // 村の背景
-    ctx.fillStyle='#0a0816'; ctx.fillRect(0,0,canvas.width,canvas.height);
-    ctx.fillStyle='#100c20'; ctx.fillRect(0,canvas.height/2,canvas.width,canvas.height/2);
-    // 星
-    for (let i=0;i<20;i++) {
-        const bx = ((i*137+50)%(canvas.width+200))-100 - Math.round(cameraX*0.05)%200;
-        const by = (i*89+30)%canvas.height;
-        if (Math.floor((Date.now()/400+i)%3)<2) px(bx, by, 1, 1, '#446');
+    const groundY = (ROWS-2)*TILE;
+    // 空のグラデーション
+    ctx.fillStyle='#0c0818'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    // 遠景の山
+    for (let i=0;i<6;i++) {
+        const mx = i*200 - Math.round(cameraX*0.1)%200 - 100;
+        const mh = 60 + (i%3)*30;
+        ctx.fillStyle='#161228';
+        ctx.beginPath();
+        ctx.moveTo(mx, groundY-60); ctx.lineTo(mx+100, groundY-60-mh); ctx.lineTo(mx+200, groundY-60);
+        ctx.fill();
     }
-    // タイル描画（村マップ）
-    const theme = STAGE_THEMES[0]; // 村用テーマ
+    // 星
+    for (let i=0;i<25;i++) {
+        const bx = ((i*137+50)%(canvas.width+200))-100 - Math.round(cameraX*0.03)%200;
+        const by = (i*67+10)%(groundY-80);
+        const blink = Math.floor((Date.now()/500+i*7)%3);
+        if (blink<2) px(bx, by, 1, 1, blink===0?'#668':'#446');
+    }
+    // 背景の木（装飾、遠景）
+    for (const tx of [1,12,22,32,38]) {
+        const sx = Math.round(tx*TILE - cameraX*0.8);
+        if (sx < -60 || sx > canvas.width+60) continue;
+        // 幹
+        pxRect(sx+14, groundY-70, 8, 30, '#432');
+        pxRect(sx+16, groundY-70, 4, 30, '#543');
+        // 葉
+        pxRect(sx+2, groundY-100, 32, 20, '#243');
+        pxRect(sx+6, groundY-115, 24, 18, '#253');
+        pxRect(sx+10, groundY-125, 16, 14, '#264');
+    }
+
+    // === 建物描画（装飾のみ、衝突なし） ===
+    _drawBuilding(5*TILE, groundY, 6, '鍛冶屋', '#f84', '#643', '#432', true);
+    _drawBuilding(15*TILE, groundY, 6, '訓練場', '#4f8', '#354', '#243', false);
+    _drawBuilding(25*TILE, groundY, 6, '魔術師の塔', '#c8f', '#436', '#324', false, true);
+
+    // === 地面描画（石畳風） ===
     const s0=Math.floor(cameraX/TILE), s1=s0+COLS+2;
-    for (let r=0;r<villageMap.length;r++) {
-        for (let c=s0;c<=s1&&c<(villageMap[r]||[]).length;c++) {
+    for (let r=ROWS-2;r<ROWS;r++) {
+        for (let c=s0;c<=s1&&c<VILLAGE_W;c++) {
             if (c<0) continue;
-            const v=villageMap[r][c]; if (!v) continue;
             const sx=Math.round(c*TILE-cameraX), sy=r*TILE;
-            if (v===1) {
-                pxRect(sx, sy, TILE, TILE, '#443');
-                pxRect(sx, sy, TILE, 2, '#665');
-                pxRect(sx, sy+TILE-2, TILE, 2, '#221');
-                const off = (r%2)*(TILE/2);
-                pxRect(sx+((TILE/4+off)%TILE), sy, 2, TILE/2, '#332');
-                pxRect(sx+((TILE*3/4+off)%TILE), sy+TILE/2, 2, TILE/2, '#332');
-            } else if (v===2) {
-                pxRect(sx, sy, TILE, TILE, '#556');
-                pxRect(sx, sy, TILE, 2, '#778');
-                pxRect(sx, sy+TILE-2, TILE, 2, '#334');
+            // 石畳
+            pxRect(sx, sy, TILE, TILE, '#3a3530');
+            pxRect(sx, sy, TILE, 2, '#4a4540');
+            pxRect(sx, sy+TILE-1, TILE, 1, '#2a2520');
+            // 石の模様
+            const off = (r%2)*(TILE/2);
+            pxRect(sx+((TILE/2+off)%TILE), sy, 1, TILE, '#2a2520');
+            // 草
+            if (r===ROWS-2) {
+                pxRect(sx, sy, TILE, 3, '#3a4a30');
+                if (c%3===0) { px(sx+4, sy-4, 2, 4, '#4a6a30'); px(sx+8, sy-6, 2, 6, '#3a5a28'); }
+                if (c%5===2) px(sx+16, sy-3, 2, 3, '#4a6a30');
             }
         }
     }
-    // 建物の看板
-    const signs = [
-        { x:8*TILE, y:(ROWS-7)*TILE, text:'鍛冶屋', color:'#f84' },
-        { x:16*TILE, y:(ROWS-7)*TILE, text:'訓練場', color:'#4f8' },
-        { x:24*TILE, y:(ROWS-8)*TILE, text:'魔術師', color:'#c8f' },
-    ];
-    for (const s of signs) {
-        const sx = Math.round(s.x - cameraX);
-        if (sx < -80 || sx > canvas.width+80) continue;
-        pxRect(sx-2, s.y-2, 64, 16, '#111');
-        ctx.fillStyle=s.color; ctx.font='bold 10px monospace'; ctx.textAlign='center';
-        ctx.fillText(s.text, sx+30, s.y+10);
-        ctx.textAlign='left';
+
+    // === 道の装飾 ===
+    // 灯り（ランタン）
+    for (const lx of [3.5, 11.5, 21, 33]) {
+        const sx = Math.round(lx*TILE - cameraX);
+        if (sx < -20 || sx > canvas.width+20) continue;
+        // ポール
+        pxRect(sx, groundY-60, 4, 60, '#554');
+        // ランタン
+        const glow = Math.sin(Date.now()*0.003 + lx)*0.3 + 0.7;
+        ctx.globalAlpha = glow;
+        pxRect(sx-4, groundY-68, 12, 10, '#442');
+        pxRect(sx-2, groundY-66, 8, 6, '#fa4');
+        px(sx, groundY-64, 4, 2, '#ff8');
+        ctx.globalAlpha = 1;
+        // 光の円
+        ctx.globalAlpha = glow * 0.08;
+        ctx.fillStyle='#fa8';
+        ctx.beginPath(); ctx.arc(sx+2, groundY-60, 40, 0, Math.PI*2); ctx.fill();
+        ctx.globalAlpha = 1;
     }
+
     // NPC描画
     for (const npc of NPCS) {
         const sx = Math.round(npc.x - cameraX);
         const sy = Math.round(npc.y);
         if (sx < -40 || sx > canvas.width+40) continue;
         const bob = Math.round(Math.sin(Date.now()*0.002 + npc.x)*2);
+        const y = sy + bob;
+        // 影
+        ctx.globalAlpha = 0.3;
+        pxRect(sx+2, sy+npc.h-2, 26, 4, '#000');
+        ctx.globalAlpha = 1;
         // 体
-        pxRect(sx+4, sy+bob, 22, 12, npc.color); // 頭
-        pxRect(sx+2, sy+12+bob, 26, 20, npc.bodyColor); // 胴体
-        pxRect(sx+6, sy+32+bob, 8, 8, npc.bodyColor); // 左脚
-        pxRect(sx+16, sy+32+bob, 8, 8, npc.bodyColor); // 右脚
+        pxRect(sx+4, y, 22, 12, npc.color); // 頭
+        pxRect(sx+2, y+12, 26, 20, npc.bodyColor); // 胴体
+        pxRect(sx+6, y+32, 8, 8, npc.bodyColor); // 左脚
+        pxRect(sx+16, y+32, 8, 8, npc.bodyColor); // 右脚
         // 目
-        px(sx+8, sy+4+bob, 3, 3, '#fff');
-        px(sx+18, sy+4+bob, 3, 3, '#fff');
+        px(sx+8, y+4, 3, 3, '#fff');
+        px(sx+18, y+4, 3, 3, '#fff');
         // 名前
-        ctx.fillStyle=npc.color; ctx.font='bold 10px monospace'; ctx.textAlign='center';
-        ctx.fillText(npc.name, sx+15, sy-6+bob);
+        ctx.fillStyle=npc.color; ctx.font='bold 11px monospace'; ctx.textAlign='center';
+        ctx.fillText(npc.name, sx+15, sy-8+bob);
         ctx.textAlign='left';
         // 近くにいるとき「E」表示
         const dx = Math.abs((player.x+player.w/2)-(npc.x+npc.w/2));
         const dy = Math.abs((player.y+player.h/2)-(npc.y+npc.h/2));
-        if (dx < 50 && dy < 50) {
+        if (dx < 60 && dy < 60) {
             const blink = Math.floor(Date.now()/400)%2;
             if (blink) {
-                ctx.fillStyle='#fc0'; ctx.font='bold 12px monospace'; ctx.textAlign='center';
-                ctx.fillText('[E] 話す', sx+15, sy-18+bob);
+                pxRect(sx-8, sy-28+bob, 50, 16, 'rgba(0,0,0,0.7)');
+                ctx.fillStyle='#fc0'; ctx.font='bold 11px monospace'; ctx.textAlign='center';
+                ctx.fillText('[E] 話す', sx+15, sy-16+bob);
                 ctx.textAlign='left';
             }
         }
     }
-    // 出口ゲート描画
+
+    // === 出口ゲート描画（装飾、衝突なし） ===
     const gsx = Math.round(GATE_X - cameraX);
-    // 門柱
-    pxRect(gsx-4, (ROWS-8)*TILE, 8, 6*TILE, '#644');
-    pxRect(gsx+3*TILE-4, (ROWS-8)*TILE, 8, 6*TILE, '#644');
-    // 門の上
-    pxRect(gsx, (ROWS-8)*TILE, 3*TILE, 8, '#866');
-    pxRect(gsx, (ROWS-8)*TILE+8, 3*TILE, 4, '#644');
+    // 門柱（装飾）
+    pxRect(gsx, groundY-120, 10, 120, '#654');
+    pxRect(gsx+2, groundY-120, 6, 120, '#765');
+    pxRect(gsx+3*TILE, groundY-120, 10, 120, '#654');
+    pxRect(gsx+3*TILE+2, groundY-120, 6, 120, '#765');
+    // 門のアーチ
+    pxRect(gsx, groundY-124, 3*TILE+10, 8, '#876');
+    pxRect(gsx+4, groundY-120, 3*TILE+2, 4, '#765');
+    // 矢印装飾
+    pxRect(gsx+TILE, groundY-80, TILE, 4, '#a64');
+    pxRect(gsx+TILE+TILE-4, groundY-88, 4, 20, '#a64');
     // テキスト
-    ctx.fillStyle='#f44'; ctx.font='bold 11px monospace'; ctx.textAlign='center';
-    ctx.fillText('出口 →', gsx+1.5*TILE, (ROWS-9)*TILE+10);
+    ctx.fillStyle='#f64'; ctx.font='bold 14px monospace'; ctx.textAlign='center';
+    ctx.fillText('▶ 出撃', gsx+1.5*TILE+5, groundY-96);
     // ステージ表示
     const nextLevel = Math.min(hubSelectedLevel, Math.min(highestLevelCleared + 1, LEVELS.length - 1));
     const stg = Math.floor(nextLevel / 4) + 1;
     const lvlInStg = (nextLevel % 4) + 1;
     const isBoss = !!LEVELS[nextLevel].boss;
-    ctx.fillStyle='#fa8'; ctx.font='10px monospace';
-    ctx.fillText(`Stage${stg}-${isBoss?'BOSS':lvlInStg}`, gsx+1.5*TILE, (ROWS-9)*TILE+24);
+    ctx.fillStyle='#fa8'; ctx.font='bold 12px monospace';
+    ctx.fillText(`Stage${stg}-${isBoss?'BOSS':lvlInStg} ${LEVELS[nextLevel].name}`, gsx+1.5*TILE+5, groundY-76);
     ctx.textAlign='left';
     // 近くにいると案内
-    if (player.x > GATE_X - 60) {
+    if (player.x > GATE_X - 80) {
         const blink = Math.floor(Date.now()/400)%2;
         if (blink) {
-            ctx.fillStyle='#fc0'; ctx.font='bold 12px monospace'; ctx.textAlign='center';
-            ctx.fillText('[E] 出撃  [←→] ステージ選択', gsx+1.5*TILE, (ROWS-4)*TILE-10);
+            pxRect(gsx-20, groundY-50, 3*TILE+50, 18, 'rgba(0,0,0,0.7)');
+            ctx.fillStyle='#fc0'; ctx.font='bold 11px monospace'; ctx.textAlign='center';
+            ctx.fillText('[E] 出撃  [↑↓] ステージ選択', gsx+1.5*TILE+5, groundY-36);
             ctx.textAlign='left';
         }
     }
+
     // プレイヤー描画
     drawPlayer();
-    // HUD（上部に所持金・素材表示）
-    pxRect(4,4,260,24, 'rgba(0,0,0,0.7)');
-    ctx.fillStyle='#fc0'; ctx.font='bold 13px monospace';
-    ctx.fillText(`${gold}G`, 12, 20);
-    ctx.fillStyle='#8cf'; ctx.font='bold 13px monospace';
-    ctx.fillText(`素材 ${materials}`, 100, 20);
-    // クリア状況
+
+    // HUD
+    pxRect(4,4,280,28, 'rgba(0,0,0,0.7)');
+    pxRect(4,4,280,2, '#a8f');
+    ctx.fillStyle='#fc0'; ctx.font='bold 14px monospace';
+    ctx.fillText(`${gold}G`, 12, 22);
+    ctx.fillStyle='#8cf';
+    ctx.fillText(`素材 ${materials}`, 100, 22);
     const cleared = highestLevelCleared >= 0 ? `Stage${Math.floor(highestLevelCleared/4)+1}-${(highestLevelCleared%4)+1}済` : '';
     ctx.fillStyle='#8a8'; ctx.font='11px monospace';
-    ctx.fillText(cleared, 190, 20);
+    ctx.fillText(cleared, 200, 22);
 
     // 操作ヒント
-    pxRect(canvas.width/2-160, canvas.height-22, 320, 18, 'rgba(0,0,0,0.6)');
-    ctx.fillStyle='#556'; ctx.font='10px monospace'; ctx.textAlign='center';
-    ctx.fillText('AD/←→:移動  W/↑/Space:ジャンプ  E/Enter:話す/出撃  F1:デバッグ', canvas.width/2, canvas.height-8);
+    pxRect(canvas.width/2-200, canvas.height-24, 400, 20, 'rgba(0,0,0,0.7)');
+    ctx.fillStyle='#667'; ctx.font='10px monospace'; ctx.textAlign='center';
+    ctx.fillText('AD/←→:移動  W/↑/Space:ジャンプ  E/Enter:話す/出撃  F1:デバッグ', canvas.width/2, canvas.height-9);
     ctx.textAlign='left';
 
-    // ショップUI（NPC会話中）
+    // ショップUI
     if (talkingTo) drawShopUI();
 
     // メッセージ
@@ -3393,6 +3436,66 @@ function drawHub() {
         ctx.globalAlpha = 1;
         ctx.textAlign='left';
     }
+}
+
+// 建物描画ヘルパー（装飾のみ）
+function _drawBuilding(bx, groundY, widthTiles, label, labelColor, wallColor, roofColor, hasChimney, isTall) {
+    const sx = Math.round(bx - cameraX);
+    if (sx < -widthTiles*TILE-40 || sx > canvas.width+40) return;
+    const bw = widthTiles * TILE;
+    const bh = isTall ? 140 : 100;
+    const by = groundY - bh;
+    // 壁（背景描画のみ）
+    pxRect(sx, by+16, bw, bh-16, wallColor);
+    pxRect(sx+2, by+18, bw-4, bh-20, wallColor);
+    // 窓
+    const winColor = '#442';
+    const winGlow = '#664';
+    pxRect(sx+8, by+40, 16, 16, winColor);
+    pxRect(sx+10, by+42, 12, 12, winGlow);
+    px(sx+12, by+44, 4, 4, '#886');
+    if (bw > 160) {
+        pxRect(sx+bw-24, by+40, 16, 16, winColor);
+        pxRect(sx+bw-22, by+42, 12, 12, winGlow);
+    }
+    // ドア
+    const doorX = sx + bw/2 - 12;
+    pxRect(doorX, groundY-48, 24, 48, '#321');
+    pxRect(doorX+2, groundY-46, 20, 44, '#432');
+    pxRect(doorX+16, groundY-28, 4, 4, '#876'); // ドアノブ
+    // 屋根（三角）
+    ctx.fillStyle = roofColor;
+    ctx.beginPath();
+    ctx.moveTo(sx-8, by+16);
+    ctx.lineTo(sx+bw/2, by-20);
+    ctx.lineTo(sx+bw+8, by+16);
+    ctx.fill();
+    // 屋根ハイライト
+    ctx.fillStyle = labelColor + '44';
+    ctx.beginPath();
+    ctx.moveTo(sx+bw/2, by-20);
+    ctx.lineTo(sx+bw/2-4, by+10);
+    ctx.lineTo(sx+bw/2+4, by+10);
+    ctx.fill();
+    // 煙突
+    if (hasChimney) {
+        pxRect(sx+bw-30, by-30, 12, 30, '#543');
+        // 煙
+        const st = Date.now()*0.002;
+        for (let i=0;i<3;i++) {
+            ctx.globalAlpha = 0.3 - i*0.08;
+            const smokeY = by-35-i*14-Math.sin(st+i)*4;
+            const smokeX = sx+bw-26+Math.sin(st*0.7+i*2)*4;
+            pxRect(Math.round(smokeX), Math.round(smokeY), 6+i*2, 6+i*2, '#888');
+        }
+        ctx.globalAlpha = 1;
+    }
+    // 看板
+    pxRect(sx+bw/2-30, by-8, 60, 16, 'rgba(0,0,0,0.7)');
+    pxRect(sx+bw/2-30, by-8, 60, 2, labelColor);
+    ctx.fillStyle=labelColor; ctx.font='bold 11px monospace'; ctx.textAlign='center';
+    ctx.fillText(label, sx+bw/2, by+5);
+    ctx.textAlign='left';
 }
 
 function drawShopUI() {
