@@ -153,6 +153,19 @@ const BGM3 = {
          NOTE.F3,NOTE.R,NOTE.F3,NOTE.D3, NOTE.E3,NOTE.R,NOTE.A3,NOTE.R],
 };
 
+// 村BGM: 穏やかな牧歌的メロディ (BPM100)
+const BGM_HUB = {
+    tempo:100,
+    mel:[NOTE.E4,NOTE.G4,NOTE.A4,NOTE.G4, NOTE.E4,NOTE.D4,NOTE.E4,NOTE.R,
+         NOTE.C4,NOTE.E4,NOTE.G4,NOTE.E4, NOTE.D4,NOTE.C4,NOTE.D4,NOTE.R,
+         NOTE.E4,NOTE.G4,NOTE.B4,NOTE.A4, NOTE.G4,NOTE.E4,NOTE.D4,NOTE.E4,
+         NOTE.C4,NOTE.D4,NOTE.E4,NOTE.G4, NOTE.E4,NOTE.D4,NOTE.C4,NOTE.R],
+    bas:[NOTE.C3,NOTE.R,NOTE.E3,NOTE.R, NOTE.A3,NOTE.R,NOTE.G3,NOTE.R,
+         NOTE.F3,NOTE.R,NOTE.A3,NOTE.R, NOTE.G3,NOTE.R,NOTE.E3,NOTE.R,
+         NOTE.C3,NOTE.R,NOTE.E3,NOTE.R, NOTE.F3,NOTE.R,NOTE.G3,NOTE.R,
+         NOTE.A3,NOTE.R,NOTE.G3,NOTE.R, NOTE.E3,NOTE.R,NOTE.C3,NOTE.R],
+};
+
 const BGMS = [BGM1, BGM2, BGM3];
 let bgmStep = 0;
 let currentBgmIdx = 0;
@@ -175,6 +188,30 @@ function startBGM(stageIdx) {
         if (i%2===1) playNoise(0.02, 0.06);
         bgmStep++;
     }, beat);
+}
+
+// 村専用BGM
+let hubBgmInterval = null;
+let hubBgmStep = 0;
+function startHubBGM() {
+    if (hubBgmInterval) return;
+    hubBgmStep = 0;
+    const bgm = BGM_HUB;
+    const beat = 60000 / bgm.tempo;
+    hubBgmInterval = setInterval(()=>{
+        if (!audioCtx || state !== S.HUB) return;
+        const i = hubBgmStep % bgm.mel.length;
+        const mel = bgm.mel[i];
+        const bas = bgm.bas[i];
+        if (mel > 0) playTone(mel, beat/1000 * 0.9, 'triangle', 0.08);
+        if (bas > 0) playTone(bas, beat/1000 * 0.9, 'sine', 0.06);
+        // 軽いパーカッション（柔らかく）
+        if (i%8===0) playNoise(0.03, 0.04);
+        hubBgmStep++;
+    }, beat);
+}
+function stopHubBGM() {
+    if (hubBgmInterval) { clearInterval(hubBgmInterval); hubBgmInterval = null; }
 }
 
 function stopBGM() {
@@ -278,6 +315,10 @@ canvas.addEventListener('mousedown', e => {
                 }
             }
         }
+        // マップエディタでのクリック
+        if (mapEditorActive && state === S.PLAY) {
+            mapEditorHandleClick();
+        }
         // デバッグメニューでのクリック選択
         if (state === S.DEBUG_MENU) {
             handleDebugMenuClick();
@@ -319,6 +360,16 @@ window.addEventListener('keydown', e => {
     if (e.code === 'F1' && (state === S.PLAY || state === S.HUB)) {
         e.preventDefault();
         openDebugMenu();
+    }
+    // マップエディタ開閉 (F2)
+    if (e.code === 'F2' && (state === S.PLAY || state === S.HUB)) {
+        e.preventDefault();
+        if (mapEditorActive) closeMapEditor();
+        else if (state === S.PLAY) openMapEditor();
+    }
+    // マップエディタキー操作
+    if (mapEditorActive) {
+        mapEditorHandleKey(e);
     }
 });
 window.addEventListener('keyup', e => keys[e.code] = false);
@@ -2111,8 +2162,114 @@ function expandLevel(origGenerate, origWidth, extraEnemySpawns) {
     };
 }
 
+// プロシージャル変化パターン（セクション毎に異なる構造を生成）
+const SECTION_PATTERNS = [
+    // パターン0: 階段状の上り下り
+    function(m, startC, len, seed) {
+        const rng = seedRNG(seed);
+        const stepW = 3 + Math.floor(rng()*2);
+        for (let i=0; i<len-10; i+=stepW+2) {
+            const c = startC + i + 3;
+            const h = 3 + Math.floor(rng()*3);
+            if (c+stepW >= startC+len-4) break;
+            platf(m, [[c, ROWS-2-h, stepW]]);
+            if (rng() < 0.3) spikes(m, c, ROWS-3, Math.min(2, stepW));
+        }
+    },
+    // パターン1: 縦穴+橋渡り
+    function(m, startC, len, seed) {
+        const rng = seedRNG(seed);
+        const pitCount = 2 + Math.floor(rng()*2);
+        for (let p=0; p<pitCount; p++) {
+            const pc = startC + 6 + Math.floor(rng()*(len-16));
+            const pw = 3 + Math.floor(rng()*3);
+            clearCols(m, pc, pw, ROWS-2, ROWS);
+            spikes(m, pc, ROWS-1, pw);
+            // 穴の上に足場
+            platf(m, [[pc, ROWS-5-Math.floor(rng()*2), Math.min(pw, 3)]]);
+        }
+    },
+    // パターン2: 迷路壁+上下ルート
+    function(m, startC, len, seed) {
+        const rng = seedRNG(seed);
+        const wallCount = 1 + Math.floor(rng()*2);
+        for (let w=0; w<wallCount; w++) {
+            const wc = startC + 8 + Math.floor(rng()*(len-20));
+            const wh = 4 + Math.floor(rng()*3);
+            wall(m, wc, ROWS-3, wh);
+            // 壁に穴（下ルート or 上ルート）
+            if (rng() < 0.5) set(m, wc, ROWS-4, 0);
+            else set(m, wc, ROWS-5, 0);
+            // 壁の上に足場
+            platf(m, [[wc-2, ROWS-2-wh-1, 3]]);
+        }
+    },
+    // パターン3: 高台密集エリア
+    function(m, startC, len, seed) {
+        const rng = seedRNG(seed);
+        const platCount = 4 + Math.floor(rng()*3);
+        for (let p=0; p<platCount; p++) {
+            const pc = startC + 3 + Math.floor(rng()*(len-8));
+            const ph = 4 + Math.floor(rng()*6);
+            const pw = 2 + Math.floor(rng()*2);
+            if (pc+pw < startC+len-2) platf(m, [[pc, ROWS-2-ph, pw]]);
+        }
+    },
+    // パターン4: スパイク回廊（地面スパイク+安全な足場）
+    function(m, startC, len, seed) {
+        const rng = seedRNG(seed);
+        // 地面にスパイクを配置
+        for (let i=4; i<len-6; i+=4+Math.floor(rng()*3)) {
+            const sc = startC + i;
+            const sl = 2 + Math.floor(rng()*2);
+            if (sc+sl < startC+len-3) spikes(m, sc, ROWS-3, sl);
+        }
+        // 安全な足場を上に
+        for (let i=3; i<len-5; i+=5+Math.floor(rng()*3)) {
+            const pc = startC + i;
+            const ph = 4 + Math.floor(rng()*3);
+            if (pc+3 < startC+len-2) platf(m, [[pc, ROWS-2-ph, 3]]);
+        }
+    },
+    // パターン5: 天井からの柱+狭い通路
+    function(m, startC, len, seed) {
+        const rng = seedRNG(seed);
+        const pillarCount = 2 + Math.floor(rng()*2);
+        for (let p=0; p<pillarCount; p++) {
+            const pc = startC + 5 + Math.floor(rng()*(len-12));
+            const ph = 3 + Math.floor(rng()*3);
+            for (let c=pc; c<pc+2 && c<startC+len-2; c++) {
+                for (let r=0; r<ph; r++) set(m, c, r, 2);
+            }
+        }
+        // 通路の両側に足場
+        for (let i=3; i<len-6; i+=6+Math.floor(rng()*3)) {
+            const pc = startC + i;
+            if (pc+3 < startC+len-2) platf(m, [[pc, ROWS-5-Math.floor(rng()*3), 3]]);
+        }
+    },
+];
+
+// シード付き疑似乱数
+function seedRNG(seed) {
+    let s = seed;
+    return function() {
+        s = (s * 1103515245 + 12345) & 0x7fffffff;
+        return (s / 0x7fffffff);
+    };
+}
+
+// 追加敵パターン（セクションの変化に合わせた敵配置）
+const EXTRA_ENEMY_SETS = [
+    [{type:'zombie',relCol:5,row:ROWS-3},{type:'shade',relCol:12,row:ROWS-7}],
+    [{type:'shade',relCol:8,row:ROWS-6},{type:'spawner',relCol:15,row:ROWS-5}],
+    [{type:'demon',relCol:6,row:ROWS-3},{type:'zombie',relCol:14,row:ROWS-3}],
+    [{type:'shade',relCol:4,row:ROWS-8},{type:'demon',relCol:10,row:ROWS-3},{type:'shade',relCol:18,row:ROWS-6}],
+    [{type:'spawner',relCol:7,row:ROWS-5},{type:'shade',relCol:13,row:ROWS-7},{type:'zombie',relCol:20,row:ROWS-3}],
+];
+
 // 各レベルを3x化するための後処理
-// ボスステージ以外のレベルの width を3倍にし、セクションを繰り返す
+// ボスステージ以外のレベルの width を3倍にし、各セクションに構造バリエーションを追加
 (function tripleNonBossLevels() {
     for (let i = 0; i < LEVELS.length; i++) {
         const lvl = LEVELS[i];
@@ -2123,7 +2280,8 @@ function expandLevel(origGenerate, origWidth, extraEnemySpawns) {
         const origGenerate = lvl.generate;
         const origEnemies = [...lvl.enemySpawns];
         const origSetupDynamic = lvl.setupDynamic;
-        // 敵を3セクション分に展開
+        const levelSeed = i * 1000 + 42;
+        // 敵を3セクション分に展開（セクション2,3は追加パターンも適用）
         lvl.enemySpawns = [];
         for (let sec = 0; sec < 3; sec++) {
             const offset = sec * origW;
@@ -2134,33 +2292,62 @@ function expandLevel(origGenerate, origWidth, extraEnemySpawns) {
                     row: sp.row
                 });
             }
+            // セクション2,3に追加敵
+            if (sec > 0) {
+                const extraSet = EXTRA_ENEMY_SETS[(levelSeed + sec) % EXTRA_ENEMY_SETS.length];
+                for (const sp of extraSet) {
+                    const col = Math.min(sp.relCol + offset + 3, newW - 3);
+                    lvl.enemySpawns.push({ type: sp.type, col, row: sp.row });
+                }
+            }
         }
-        // generateを3セクション繰り返しに拡張
+        // generateを3セクション+プロシージャル変化に拡張
         lvl.generate = function(w) {
             const m = blank(w, ROWS);
-            // 各セクションのマップを生成して合成
-            for (let sec = 0; sec < 3; sec++) {
+            // セクション1: オリジナルマップ
+            const sec0Map = origGenerate.call(lvl, origW);
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < origW; c++) {
+                    if (sec0Map[r][c] !== 5) m[r][c] = sec0Map[r][c];
+                }
+            }
+            // セクション2,3: オリジナル+プロシージャル変化
+            for (let sec = 1; sec < 3; sec++) {
                 const offset = sec * origW;
                 const secMap = origGenerate.call(lvl, origW);
                 for (let r = 0; r < ROWS; r++) {
                     for (let c = 0; c < origW; c++) {
                         const destC = c + offset;
-                        if (destC < w && secMap[r][c] !== 5) { // ゴールは最後のセクションのみ
-                            if (sec < 2 || secMap[r][c] !== 5) {
-                                m[r][destC] = secMap[r][c];
-                            }
+                        if (destC < w && secMap[r][c] !== 5) {
+                            m[r][destC] = secMap[r][c];
                         }
                     }
+                }
+                // プロシージャル変化をオーバーレイ
+                const patIdx1 = (levelSeed + sec * 37) % SECTION_PATTERNS.length;
+                const patIdx2 = (levelSeed + sec * 73 + 1) % SECTION_PATTERNS.length;
+                const seed1 = levelSeed * 100 + sec * 7;
+                const seed2 = levelSeed * 200 + sec * 13;
+                SECTION_PATTERNS[patIdx1](m, offset, origW, seed1);
+                if (patIdx1 !== patIdx2) {
+                    SECTION_PATTERNS[patIdx2](m, offset, origW, seed2);
                 }
             }
             // ゴールは最後のセクションの最後に配置
             setGoal(m, w - 4, ROWS - 5);
-            // セクション境界を繋ぐ地面
+            // セクション境界を繋ぐ地面（接続部分を確実に通行可能に）
             for (let sec = 0; sec < 2; sec++) {
                 const boundary = (sec + 1) * origW;
-                fillRow(m, ROWS-1, boundary - 3, boundary + 3, 1);
-                fillRow(m, ROWS-2, boundary - 3, boundary + 3, 1);
-                // 境界に足場を追加
+                fillRow(m, ROWS-1, boundary - 4, boundary + 4, 1);
+                fillRow(m, ROWS-2, boundary - 4, boundary + 4, 1);
+                // 境界の壁やスパイクを除去（通行可能にする）
+                for (let c = boundary-3; c < boundary+3; c++) {
+                    for (let r = ROWS-6; r < ROWS-2; r++) {
+                        if (r>=0 && c>=0 && c<w && m[r][c] === 3) m[r][c] = 0;
+                        if (r>=0 && c>=0 && c<w && m[r][c] === 2) m[r][c] = 0;
+                    }
+                }
+                // 境界に装飾的な足場
                 platf(m, [[boundary - 2, ROWS-5, 3]]);
             }
             return m;
@@ -2168,10 +2355,7 @@ function expandLevel(origGenerate, origWidth, extraEnemySpawns) {
         // setupDynamicも3セクション分
         if (origSetupDynamic) {
             lvl.setupDynamic = function() {
-                // 元のセットアップを3回呼び出すのは難しいので、
-                // 各セクションのオフセットでオブジェクトを配置
                 origSetupDynamic.call(lvl);
-                // 元のオブジェクトをコピーしてオフセット版を追加
                 const origMP = [...movingPlatforms];
                 const origCB = [...crumblingBlocks];
                 for (let sec = 1; sec < 3; sec++) {
@@ -2186,11 +2370,82 @@ function expandLevel(origGenerate, origWidth, extraEnemySpawns) {
                             cb.x + offset, cb.y, cb.w
                         ));
                     }
+                    // セクション毎に追加の動的オブジェクト
+                    const rng = seedRNG(levelSeed + sec * 50);
+                    const addMP = Math.floor(rng()*2) + 1;
+                    for (let j=0; j<addMP; j++) {
+                        const mpc = offset + Math.floor(rng()*(origW-10)*TILE) + 5*TILE;
+                        const dir = rng() < 0.5 ? 'h' : 'v';
+                        const dist = dir === 'h' ? (3+Math.floor(rng()*3))*TILE : -(2+Math.floor(rng()*2))*TILE;
+                        movingPlatforms.push(new MovingPlatform(mpc, (ROWS-4-Math.floor(rng()*3))*TILE, TILE*2, dir, dist, 0.7+rng()*0.5));
+                    }
+                    // 追加崩れる床
+                    if (rng() < 0.6) {
+                        const cbc = offset + Math.floor(rng()*(origW-8)*TILE) + 4*TILE;
+                        crumblingBlocks.push(new CrumblingBlock(cbc, (ROWS-3)*TILE, TILE*(1+Math.floor(rng()*2))));
+                    }
                 }
             };
         }
     }
 })();
+
+// 敵が壁に埋まっている場合、上方向に押し出す
+function _unstickEnemy(e, map) {
+    if (!map || !map[0]) return;
+    // 敵の四隅のいずれかがソリッドタイルにあるか確認
+    const checkPoints = [
+        [e.x + 2, e.y + 2],
+        [e.x + e.w - 2, e.y + 2],
+        [e.x + 2, e.y + e.h - 2],
+        [e.x + e.w - 2, e.y + e.h - 2],
+        [e.x + e.w/2, e.y + e.h/2],
+    ];
+    let stuck = false;
+    for (const [px, py] of checkPoints) {
+        const col = Math.floor(px / TILE);
+        const row = Math.floor(py / TILE);
+        if (row >= 0 && row < map.length && col >= 0 && col < map[0].length) {
+            const v = map[row][col];
+            if (v === 1 || v === 2) { stuck = true; break; }
+        }
+    }
+    if (!stuck) return;
+    // 上方向に押し出す（最大10タイル分）
+    for (let dy = 1; dy <= 10; dy++) {
+        const testY = e.y - dy * TILE;
+        let clear = true;
+        for (const [px, _] of checkPoints) {
+            const col = Math.floor(px / TILE);
+            const row = Math.floor((testY + (e.h/2)) / TILE);
+            if (row >= 0 && row < map.length && col >= 0 && col < map[0].length) {
+                const v = map[row][col];
+                if (v === 1 || v === 2) { clear = false; break; }
+            }
+        }
+        if (clear) {
+            e.y = testY;
+            return;
+        }
+    }
+    // 左右にも試行
+    for (const dx of [-TILE, TILE, -2*TILE, 2*TILE]) {
+        const testX = e.x + dx;
+        let clear = true;
+        for (const [_, py] of checkPoints) {
+            const col = Math.floor((testX + e.w/2) / TILE);
+            const row = Math.floor(py / TILE);
+            if (row >= 0 && row < map.length && col >= 0 && col < map[0].length) {
+                const v = map[row][col];
+                if (v === 1 || v === 2) { clear = false; break; }
+            }
+        }
+        if (clear) {
+            e.x = testX;
+            return;
+        }
+    }
+}
 
 // ============================================================
 //  ロード
@@ -2199,7 +2454,13 @@ function loadLevel(idx) {
     if (idx >= LEVELS.length) { state=S.CLEAR; stopBGM(); return; }
     currentLevelIdx = idx;
     const lvl = LEVELS[idx];
-    levelMap = lvl.generate(lvl.width);
+    // カスタムマップがあればそちらを使用
+    const customData = tryLoadCustomMap(idx);
+    if (customData) {
+        levelMap = customData.map;
+    } else {
+        levelMap = lvl.generate(lvl.width);
+    }
 
     enemies=[]; items=[]; bullets=[]; particles=[]; enemyBullets=[]; goal=null;
     movingPlatforms=[]; crumblingBlocks=[]; currencyDrops=[];
@@ -2233,9 +2494,32 @@ function loadLevel(idx) {
             const hpScale = getEnemyHpScale();
             e.hp = Math.floor(e.hp * hpScale);
             e.maxHp = e.hp;
+            // 壁に埋まっている場合は安全な位置に移動
+            _unstickEnemy(e, levelMap);
             // プレイヤー開始位置(80px)から遠い敵はスリープ
-            if (ex > 400 && !(e instanceof Boss)) e.sleeping = true;
+            if (e.x > 400 && !(e instanceof Boss)) e.sleeping = true;
             enemies.push(e);
+        }
+    }
+
+    // カスタムマップの敵を追加ロード
+    if (customData && customData.enemies) {
+        for (const ce of customData.enemies) {
+            let e = null;
+            if      (ce.type==='zombie')  e = new Zombie(ce.x, ce.y);
+            else if (ce.type==='shade')   e = new Shade(ce.x, ce.y);
+            else if (ce.type==='demon')   e = new Demon(ce.x, ce.y);
+            else if (ce.type==='spawner') e = new Spawner(ce.x, ce.y);
+            else if (ce.type==='boss1')   e = new Boss(ce.x, ce.y, 1);
+            else if (ce.type==='boss2')   e = new Boss(ce.x, ce.y, 2);
+            else if (ce.type==='boss3')   e = new Boss(ce.x, ce.y, 3);
+            if (e) {
+                const hpScale = getEnemyHpScale();
+                e.hp = Math.floor(e.hp * hpScale); e.maxHp = e.hp;
+                _unstickEnemy(e, levelMap);
+                if (e.x > 400 && !(e instanceof Boss)) e.sleeping = true;
+                enemies.push(e);
+            }
         }
     }
 
@@ -3639,6 +3923,303 @@ function handleDebugMenuClick() {
     }
 }
 
+// ============================================================
+//  マップエディタ
+// ============================================================
+const MAP_EDITOR_TILES = [
+    { id:0, label:'空気', color:'#333' },
+    { id:1, label:'地面', color:'#664' },
+    { id:2, label:'壁',   color:'#558' },
+    { id:3, label:'スパイク', color:'#f0a' },
+    { id:5, label:'ゴール', color:'#ff0' },
+];
+const MAP_EDITOR_ENEMIES = [
+    { type:'zombie',  label:'ゾンビ',   color:'#4a0e0e' },
+    { type:'shade',   label:'シェード', color:'#40c' },
+    { type:'demon',   label:'デーモン', color:'#880000' },
+    { type:'spawner', label:'スポーナー', color:'#cc00aa' },
+    { type:'boss1',   label:'骸骨王',   color:'#660' },
+    { type:'boss2',   label:'氷龍',     color:'#069' },
+    { type:'boss3',   label:'魔王',     color:'#600' },
+];
+let mapEditorActive = false;
+let mapEditorPrevState = null;
+let mapEditorBrush = 1; // 現在選択中のタイルID
+let mapEditorMode = 'tile'; // 'tile' or 'enemy' or 'erase_enemy'
+let mapEditorEnemyType = 'zombie';
+let mapEditorPaletteCursor = 0;
+let mapEditorLevelIdx = 0;
+let mapEditorCustomEnemies = []; // エディタで配置した敵
+let mapEditorScroll = 0; // パレットスクロール
+let mapEditorSavedMaps = {}; // levelIdx -> { map, enemies }
+
+function openMapEditor() {
+    mapEditorPrevState = state;
+    mapEditorActive = true;
+    state = S.PLAY; // PLAYモードのマップを編集
+    mapEditorLevelIdx = currentLevelIdx;
+    // 現在の敵をリスト化
+    mapEditorCustomEnemies = enemies.filter(e=>e.alive).map(e => ({
+        type: (e instanceof Boss) ? `boss${e.bossType}` :
+              (e instanceof Spawner) ? 'spawner' :
+              (e instanceof Demon) ? 'demon' :
+              (e instanceof Shade) ? 'shade' : 'zombie',
+        x: e.x, y: e.y
+    }));
+}
+
+function closeMapEditor() {
+    mapEditorActive = false;
+    if (mapEditorPrevState) state = mapEditorPrevState;
+}
+
+function mapEditorHandleKey(e) {
+    // パレット切り替え
+    if (e.code === 'Digit1') { mapEditorMode = 'tile'; mapEditorBrush = 0; }
+    if (e.code === 'Digit2') { mapEditorMode = 'tile'; mapEditorBrush = 1; }
+    if (e.code === 'Digit3') { mapEditorMode = 'tile'; mapEditorBrush = 2; }
+    if (e.code === 'Digit4') { mapEditorMode = 'tile'; mapEditorBrush = 3; }
+    if (e.code === 'Digit5') { mapEditorMode = 'tile'; mapEditorBrush = 5; }
+    if (e.code === 'Digit6') { mapEditorMode = 'enemy'; }
+    if (e.code === 'Digit7') { mapEditorMode = 'erase_enemy'; }
+    // 敵タイプ選択（敵モード時）
+    if (mapEditorMode === 'enemy') {
+        if (e.code === 'BracketLeft') {
+            const idx = MAP_EDITOR_ENEMIES.findIndex(e2=>e2.type===mapEditorEnemyType);
+            mapEditorEnemyType = MAP_EDITOR_ENEMIES[(idx-1+MAP_EDITOR_ENEMIES.length)%MAP_EDITOR_ENEMIES.length].type;
+        }
+        if (e.code === 'BracketRight') {
+            const idx = MAP_EDITOR_ENEMIES.findIndex(e2=>e2.type===mapEditorEnemyType);
+            mapEditorEnemyType = MAP_EDITOR_ENEMIES[(idx+1)%MAP_EDITOR_ENEMIES.length].type;
+        }
+    }
+    // 保存（Ctrl+S）
+    if (e.code === 'KeyS' && e.ctrlKey) {
+        e.preventDefault();
+        saveMapToStorage();
+    }
+    // ロード（Ctrl+L）
+    if (e.code === 'KeyL' && e.ctrlKey) {
+        e.preventDefault();
+        loadMapFromStorage();
+    }
+    // F2で閉じる
+    if (e.code === 'F2') {
+        closeMapEditor();
+    }
+}
+
+function mapEditorHandleClick() {
+    const worldX = mouse.x + cameraX;
+    const worldY = mouse.y;
+    const col = Math.floor(worldX / TILE);
+    const row = Math.floor(worldY / TILE);
+    if (mapEditorMode === 'tile') {
+        if (row >= 0 && row < levelMap.length && col >= 0 && col < (levelMap[0]||[]).length) {
+            levelMap[row][col] = mapEditorBrush;
+        }
+    } else if (mapEditorMode === 'enemy') {
+        // 敵を配置
+        const ex = col * TILE, ey = row * TILE;
+        let e = null;
+        if      (mapEditorEnemyType==='zombie')  e = new Zombie(ex, ey);
+        else if (mapEditorEnemyType==='shade')   e = new Shade(ex, ey);
+        else if (mapEditorEnemyType==='demon')   e = new Demon(ex, ey);
+        else if (mapEditorEnemyType==='spawner') e = new Spawner(ex, ey);
+        else if (mapEditorEnemyType==='boss1')   e = new Boss(ex, ey, 1);
+        else if (mapEditorEnemyType==='boss2')   e = new Boss(ex, ey, 2);
+        else if (mapEditorEnemyType==='boss3')   e = new Boss(ex, ey, 3);
+        if (e) {
+            const hpScale = getEnemyHpScale();
+            e.hp = Math.floor(e.hp * hpScale); e.maxHp = e.hp;
+            enemies.push(e);
+            mapEditorCustomEnemies.push({ type: mapEditorEnemyType, x: ex, y: ey });
+        }
+    } else if (mapEditorMode === 'erase_enemy') {
+        // 近くの敵を削除
+        for (let i = enemies.length-1; i >= 0; i--) {
+            const e = enemies[i];
+            if (!e.alive) continue;
+            if (Math.abs(e.x + e.w/2 - worldX) < TILE && Math.abs(e.y + e.h/2 - worldY) < TILE) {
+                e.alive = false;
+                mapEditorCustomEnemies = mapEditorCustomEnemies.filter(ce =>
+                    Math.abs(ce.x - e.x) > 5 || Math.abs(ce.y - e.y) > 5
+                );
+                break;
+            }
+        }
+    }
+}
+
+function saveMapToStorage() {
+    try {
+        const data = {
+            levelIdx: mapEditorLevelIdx,
+            map: levelMap,
+            enemies: mapEditorCustomEnemies,
+            timestamp: Date.now()
+        };
+        mapEditorSavedMaps[mapEditorLevelIdx] = data;
+        localStorage.setItem('darkAbyss_customMaps', JSON.stringify(mapEditorSavedMaps));
+        hubMessage = `マップ保存完了 (Level ${mapEditorLevelIdx})`;
+        hubMessageTimer = 120;
+    } catch(err) {
+        hubMessage = '保存失敗: ' + err.message;
+        hubMessageTimer = 120;
+    }
+}
+
+function loadMapFromStorage() {
+    try {
+        const stored = localStorage.getItem('darkAbyss_customMaps');
+        if (stored) {
+            mapEditorSavedMaps = JSON.parse(stored);
+            const data = mapEditorSavedMaps[currentLevelIdx];
+            if (data) {
+                levelMap = data.map;
+                // 敵を再配置
+                enemies = [];
+                for (const ce of data.enemies) {
+                    let e = null;
+                    if      (ce.type==='zombie')  e = new Zombie(ce.x, ce.y);
+                    else if (ce.type==='shade')   e = new Shade(ce.x, ce.y);
+                    else if (ce.type==='demon')   e = new Demon(ce.x, ce.y);
+                    else if (ce.type==='spawner') e = new Spawner(ce.x, ce.y);
+                    else if (ce.type==='boss1')   e = new Boss(ce.x, ce.y, 1);
+                    else if (ce.type==='boss2')   e = new Boss(ce.x, ce.y, 2);
+                    else if (ce.type==='boss3')   e = new Boss(ce.x, ce.y, 3);
+                    if (e) {
+                        const hpScale = getEnemyHpScale();
+                        e.hp = Math.floor(e.hp * hpScale); e.maxHp = e.hp;
+                        enemies.push(e);
+                    }
+                }
+                mapEditorCustomEnemies = [...data.enemies];
+                // ゴール再設定
+                goal = null;
+                for (let r=0; r<levelMap.length; r++) for (let c=0; c<(levelMap[r]||[]).length; c++) {
+                    if (levelMap[r][c]===5) {
+                        goal = {x:c*TILE, y:r*TILE - TILE*2, w:TILE, h:TILE*3, t:0};
+                        levelMap[r][c]=0;
+                    }
+                }
+                hubMessage = `マップロード完了 (Level ${currentLevelIdx})`;
+            } else {
+                hubMessage = 'このレベルの保存データなし';
+            }
+        } else {
+            hubMessage = '保存データなし';
+        }
+        hubMessageTimer = 120;
+    } catch(err) {
+        hubMessage = 'ロード失敗: ' + err.message;
+        hubMessageTimer = 120;
+    }
+}
+
+// ロード時にカスタムマップがあれば適用
+function tryLoadCustomMap(levelIdx) {
+    try {
+        if (Object.keys(mapEditorSavedMaps).length === 0) {
+            const stored = localStorage.getItem('darkAbyss_customMaps');
+            if (stored) mapEditorSavedMaps = JSON.parse(stored);
+        }
+        return mapEditorSavedMaps[levelIdx] || null;
+    } catch(e) { return null; }
+}
+
+function drawMapEditor() {
+    // グリッド表示
+    ctx.globalAlpha = 0.15;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 0.5;
+    const s0 = Math.floor(cameraX/TILE), s1 = s0+COLS+2;
+    for (let c = s0; c <= s1; c++) {
+        const sx = Math.round(c*TILE - cameraX);
+        ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, canvas.height); ctx.stroke();
+    }
+    for (let r = 0; r < ROWS; r++) {
+        ctx.beginPath(); ctx.moveTo(0, r*TILE); ctx.lineTo(canvas.width, r*TILE); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // カーソルハイライト
+    const worldX = mouse.x + cameraX;
+    const worldY = mouse.y;
+    const hCol = Math.floor(worldX / TILE);
+    const hRow = Math.floor(worldY / TILE);
+    const hsx = Math.round(hCol*TILE - cameraX);
+    const hsy = hRow*TILE;
+    ctx.strokeStyle = '#ff0'; ctx.lineWidth = 2;
+    ctx.strokeRect(hsx, hsy, TILE, TILE);
+    // カーソル上にブラシ情報
+    if (mapEditorMode === 'tile') {
+        const td = MAP_EDITOR_TILES.find(t=>t.id===mapEditorBrush);
+        ctx.globalAlpha = 0.4;
+        pxRect(hsx, hsy, TILE, TILE, td ? td.color : '#fff');
+        ctx.globalAlpha = 1;
+    } else if (mapEditorMode === 'enemy') {
+        const ed = MAP_EDITOR_ENEMIES.find(e=>e.type===mapEditorEnemyType);
+        ctx.globalAlpha = 0.5;
+        pxRect(hsx+5, hsy+5, 30, 30, ed ? ed.color : '#f00');
+        ctx.globalAlpha = 1;
+    }
+
+    // パネル（右上）
+    const px2 = canvas.width - 200, py = 4, pw = 196, ph = 300;
+    pxRect(px2, py, pw, ph, 'rgba(0,0,0,0.85)');
+    pxRect(px2, py, pw, 3, '#ff0');
+    ctx.fillStyle='#ff0'; ctx.font='bold 12px monospace';
+    ctx.fillText('MAP EDITOR', px2+8, py+18);
+    ctx.fillStyle='#aaa'; ctx.font='10px monospace';
+    ctx.fillText('F2:閉じる', px2+120, py+18);
+
+    // タイルパレット
+    ctx.fillStyle='#ccc'; ctx.font='bold 10px monospace';
+    ctx.fillText('タイル [1-5]:', px2+8, py+38);
+    for (let i=0; i<MAP_EDITOR_TILES.length; i++) {
+        const t = MAP_EDITOR_TILES[i];
+        const ty = py+42+i*20;
+        const isSel = (mapEditorMode==='tile' && mapEditorBrush===t.id);
+        if (isSel) pxRect(px2+4, ty-2, pw-8, 18, '#333');
+        pxRect(px2+8, ty, 14, 14, t.color);
+        ctx.fillStyle = isSel ? '#ff0' : '#aaa'; ctx.font='10px monospace';
+        ctx.fillText(`${i+1}: ${t.label}`, px2+26, ty+11);
+    }
+
+    // 敵パレット
+    const ey = py+42+MAP_EDITOR_TILES.length*20+10;
+    ctx.fillStyle='#ccc'; ctx.font='bold 10px monospace';
+    ctx.fillText('敵 [6] / 消去 [7]:', px2+8, ey);
+    if (mapEditorMode === 'enemy') {
+        const ed = MAP_EDITOR_ENEMIES.find(e=>e.type===mapEditorEnemyType);
+        ctx.fillStyle='#f84'; ctx.font='10px monospace';
+        ctx.fillText(`配置: ${ed?ed.label:'?'} [[]で変更`, px2+8, ey+16);
+    } else if (mapEditorMode === 'erase_enemy') {
+        ctx.fillStyle='#f44'; ctx.font='10px monospace';
+        ctx.fillText('敵消去モード', px2+8, ey+16);
+    }
+
+    // 操作説明
+    const iy = ey + 34;
+    ctx.fillStyle='#888'; ctx.font='9px monospace';
+    ctx.fillText('クリック: 配置/消去', px2+8, iy);
+    ctx.fillText('Ctrl+S: 保存', px2+8, iy+14);
+    ctx.fillText('Ctrl+L: ロード', px2+8, iy+28);
+    ctx.fillText(`Level: ${currentLevelIdx}`, px2+8, iy+42);
+    ctx.fillText(`座標: ${hCol},${hRow}`, px2+8, iy+56);
+
+    // メッセージ表示
+    if (hubMessageTimer > 0) {
+        ctx.textAlign='center';
+        ctx.fillStyle='#fff'; ctx.font='bold 14px monospace';
+        ctx.globalAlpha = Math.min(1, hubMessageTimer/30);
+        ctx.fillText(hubMessage, canvas.width/2, 30);
+        ctx.globalAlpha = 1;
+        ctx.textAlign='left';
+    }
+}
+
 function drawDebugMenu() {
     ctx.fillStyle = 'rgba(0,0,0,0.88)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -3704,9 +4285,12 @@ function enterHub() {
     hubSelectedLevel = Math.min(highestLevelCleared + 1, LEVELS.length - 1);
     // 村マップ生成
     setupVillageMap();
+    // 村BGM開始
+    startHubBGM();
 }
 
 function startStage(levelIdx) {
+    stopHubBGM();
     score=0;
     currentLevelIdx = levelIdx;
     // 拠点アップグレードを反映した初期能力
@@ -3744,6 +4328,16 @@ function update() {
     if (state===S.HUB) {
         updateHub();
         return;
+    }
+    // マップエディタ: マウスドラッグでタイル連続配置
+    if (mapEditorActive && mouse.down && mapEditorMode === 'tile') {
+        const worldX = mouse.x + cameraX;
+        const worldY = mouse.y;
+        const col = Math.floor(worldX / TILE);
+        const row = Math.floor(worldY / TILE);
+        if (row >= 0 && row < levelMap.length && col >= 0 && col < (levelMap[0]||[]).length) {
+            levelMap[row][col] = mapEditorBrush;
+        }
     }
     if (state===S.READY) {
         readyTimer--;
@@ -3801,6 +4395,7 @@ function draw() {
         drawPlayer();
         drawPickupTexts(cameraX);
         drawHUD();
+        if (mapEditorActive) drawMapEditor();
     } else if (state===S.REWARD) {
         drawBackground();
         drawTiles();
