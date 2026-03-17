@@ -229,7 +229,7 @@ const COLS        = Math.ceil(canvas.width  / TILE);
 const ROWS        = Math.ceil(canvas.height / TILE);
 
 // ---- ゲーム状態 ----
-const S = { TITLE:'title', PLAY:'play', OVER:'over', CLEAR:'clear', READY:'ready', REWARD:'reward', DEBUG_MENU:'debug_menu', HUB:'hub' };
+const S = { TITLE:'title', PLAY:'play', OVER:'over', CLEAR:'clear', READY:'ready', REWARD:'reward', DEBUG_MENU:'debug_menu', HUB:'hub', MAP_EDITOR:'map_editor' };
 let state    = S.TITLE;
 let score    = 0;
 let wave     = 1;           // ウェーブ（敵を全滅で次へ）
@@ -316,7 +316,7 @@ canvas.addEventListener('mousedown', e => {
             }
         }
         // マップエディタでのクリック
-        if (mapEditorActive && state === S.PLAY) {
+        if (state === S.MAP_EDITOR) {
             mapEditorHandleClick();
         }
         // デバッグメニューでのクリック選択
@@ -361,15 +361,20 @@ window.addEventListener('keydown', e => {
         e.preventDefault();
         openDebugMenu();
     }
-    // マップエディタ開閉 (F2)
-    if (e.code === 'F2' && (state === S.PLAY || state === S.HUB)) {
+    // マップエディタ開閉 (F2) — どの状態からでも開ける
+    if (e.code === 'F2') {
         e.preventDefault();
-        if (mapEditorActive) closeMapEditor();
-        else if (state === S.PLAY) openMapEditor();
+        if (state === S.MAP_EDITOR) {
+            closeMapEditor();
+        } else {
+            openMapEditor();
+        }
+        return; // F2はエディタ専用
     }
     // マップエディタキー操作
-    if (mapEditorActive) {
+    if (state === S.MAP_EDITOR) {
         mapEditorHandleKey(e);
+        return; // エディタ中は他のキー処理をブロック
     }
 });
 window.addEventListener('keyup', e => keys[e.code] = false);
@@ -3956,21 +3961,77 @@ let mapEditorSavedMaps = {}; // levelIdx -> { map, enemies }
 function openMapEditor() {
     mapEditorPrevState = state;
     mapEditorActive = true;
-    state = S.PLAY; // PLAYモードのマップを編集
-    mapEditorLevelIdx = currentLevelIdx;
-    // 現在の敵をリスト化
-    mapEditorCustomEnemies = enemies.filter(e=>e.alive).map(e => ({
-        type: (e instanceof Boss) ? `boss${e.bossType}` :
-              (e instanceof Spawner) ? 'spawner' :
-              (e instanceof Demon) ? 'demon' :
-              (e instanceof Shade) ? 'shade' : 'zombie',
-        x: e.x, y: e.y
-    }));
+    state = S.MAP_EDITOR;
+    // 初回はレベル0をロード
+    mapEditorLoadLevel(mapEditorLevelIdx);
 }
 
 function closeMapEditor() {
     mapEditorActive = false;
-    if (mapEditorPrevState) state = mapEditorPrevState;
+    // 元の状態に戻す
+    if (mapEditorPrevState === S.HUB) {
+        enterHub();
+    } else if (mapEditorPrevState === S.PLAY || mapEditorPrevState === S.READY) {
+        // ゲーム中に戻す場合はそのレベルを再ロード
+        state = mapEditorPrevState;
+    } else {
+        state = mapEditorPrevState || S.TITLE;
+    }
+}
+
+// エディタ用: 指定レベルのマップをロードして編集可能にする
+function mapEditorLoadLevel(idx) {
+    if (idx < 0 || idx >= LEVELS.length) return;
+    mapEditorLevelIdx = idx;
+    const lvl = LEVELS[idx];
+    // カスタムマップがあればそちらを使用
+    const customData = tryLoadCustomMap(idx);
+    if (customData) {
+        levelMap = customData.map.map(row => [...row]); // ディープコピー
+        mapEditorCustomEnemies = customData.enemies ? [...customData.enemies] : [];
+    } else {
+        levelMap = lvl.generate(lvl.width);
+        mapEditorCustomEnemies = [];
+    }
+    // 敵をスポーン
+    enemies = [];
+    movingPlatforms = []; crumblingBlocks = [];
+    // ゴール検出
+    goal = null;
+    for (let r = 0; r < levelMap.length; r++) for (let c = 0; c < (levelMap[r]||[]).length; c++) {
+        if (levelMap[r][c] === 5) {
+            goal = { x:c*TILE, y:r*TILE - TILE*2, w:TILE, h:TILE*3, t:0 };
+            levelMap[r][c] = 0;
+        }
+    }
+    // 標準敵を配置
+    for (const sp of lvl.enemySpawns) {
+        const ex = sp.col*TILE, ey = sp.row*TILE;
+        let e = null;
+        if      (sp.type==='zombie')  e = new Zombie(ex, ey);
+        else if (sp.type==='shade')   e = new Shade(ex, ey);
+        else if (sp.type==='demon')   e = new Demon(ex, ey);
+        else if (sp.type==='spawner') e = new Spawner(ex, ey);
+        else if (sp.type==='boss1')   e = new Boss(ex, ey, 1);
+        else if (sp.type==='boss2')   e = new Boss(ex, ey, 2);
+        else if (sp.type==='boss3')   e = new Boss(ex, ey, 3);
+        if (e) enemies.push(e);
+    }
+    // カスタム敵も配置
+    for (const ce of mapEditorCustomEnemies) {
+        let e = null;
+        if      (ce.type==='zombie')  e = new Zombie(ce.x, ce.y);
+        else if (ce.type==='shade')   e = new Shade(ce.x, ce.y);
+        else if (ce.type==='demon')   e = new Demon(ce.x, ce.y);
+        else if (ce.type==='spawner') e = new Spawner(ce.x, ce.y);
+        else if (ce.type==='boss1')   e = new Boss(ce.x, ce.y, 1);
+        else if (ce.type==='boss2')   e = new Boss(ce.x, ce.y, 2);
+        else if (ce.type==='boss3')   e = new Boss(ce.x, ce.y, 3);
+        if (e) enemies.push(e);
+    }
+    // カメラリセット
+    cameraX = 0;
+    player.x = 80; player.y = 100;
 }
 
 function mapEditorHandleKey(e) {
@@ -4003,9 +4064,37 @@ function mapEditorHandleKey(e) {
         e.preventDefault();
         loadMapFromStorage();
     }
-    // F2で閉じる
-    if (e.code === 'F2') {
-        closeMapEditor();
+    // レベル切り替え（PageUp/PageDown or Ctrl+←/→）
+    if (e.code === 'PageUp' || (e.code === 'ArrowRight' && e.ctrlKey)) {
+        e.preventDefault();
+        const next = Math.min(LEVELS.length - 1, mapEditorLevelIdx + 1);
+        if (next !== mapEditorLevelIdx) {
+            mapEditorLoadLevel(next);
+            hubMessage = `Level ${next} をロード: ${LEVELS[next].name}`;
+            hubMessageTimer = 90;
+        }
+    }
+    if (e.code === 'PageDown' || (e.code === 'ArrowLeft' && e.ctrlKey)) {
+        e.preventDefault();
+        const prev = Math.max(0, mapEditorLevelIdx - 1);
+        if (prev !== mapEditorLevelIdx) {
+            mapEditorLoadLevel(prev);
+            hubMessage = `Level ${prev} をロード: ${LEVELS[prev].name}`;
+            hubMessageTimer = 90;
+        }
+    }
+    // カメラ移動（WASD / 矢印キー）
+    if (!e.ctrlKey) {
+        if (e.code === 'KeyA' || e.code === 'ArrowLeft') {
+            cameraX = Math.max(0, cameraX - TILE*3);
+        }
+        if (e.code === 'KeyD' || e.code === 'ArrowRight') {
+            const maxCam = (levelMap[0]||[]).length * TILE - canvas.width;
+            cameraX = Math.min(maxCam, cameraX + TILE*3);
+        }
+        if (e.code === 'KeyW' || e.code === 'ArrowUp') {
+            // 上スクロール（視点移動のみ）
+        }
     }
 }
 
@@ -4053,15 +4142,24 @@ function mapEditorHandleClick() {
 
 function saveMapToStorage() {
     try {
+        // ゴールのタイルを復元してから保存
+        const mapCopy = levelMap.map(row => [...row]);
+        if (goal) {
+            const gc = Math.floor(goal.x / TILE);
+            const gr = Math.floor((goal.y + TILE*2) / TILE);
+            if (gr >= 0 && gr < mapCopy.length && gc >= 0 && gc < mapCopy[0].length) {
+                mapCopy[gr][gc] = 5;
+            }
+        }
         const data = {
             levelIdx: mapEditorLevelIdx,
-            map: levelMap,
+            map: mapCopy,
             enemies: mapEditorCustomEnemies,
             timestamp: Date.now()
         };
         mapEditorSavedMaps[mapEditorLevelIdx] = data;
         localStorage.setItem('darkAbyss_customMaps', JSON.stringify(mapEditorSavedMaps));
-        hubMessage = `マップ保存完了 (Level ${mapEditorLevelIdx})`;
+        hubMessage = `マップ保存完了 (Level ${mapEditorLevelIdx}: ${LEVELS[mapEditorLevelIdx].name})`;
         hubMessageTimer = 120;
     } catch(err) {
         hubMessage = '保存失敗: ' + err.message;
@@ -4074,41 +4172,15 @@ function loadMapFromStorage() {
         const stored = localStorage.getItem('darkAbyss_customMaps');
         if (stored) {
             mapEditorSavedMaps = JSON.parse(stored);
-            const data = mapEditorSavedMaps[currentLevelIdx];
-            if (data) {
-                levelMap = data.map;
-                // 敵を再配置
-                enemies = [];
-                for (const ce of data.enemies) {
-                    let e = null;
-                    if      (ce.type==='zombie')  e = new Zombie(ce.x, ce.y);
-                    else if (ce.type==='shade')   e = new Shade(ce.x, ce.y);
-                    else if (ce.type==='demon')   e = new Demon(ce.x, ce.y);
-                    else if (ce.type==='spawner') e = new Spawner(ce.x, ce.y);
-                    else if (ce.type==='boss1')   e = new Boss(ce.x, ce.y, 1);
-                    else if (ce.type==='boss2')   e = new Boss(ce.x, ce.y, 2);
-                    else if (ce.type==='boss3')   e = new Boss(ce.x, ce.y, 3);
-                    if (e) {
-                        const hpScale = getEnemyHpScale();
-                        e.hp = Math.floor(e.hp * hpScale); e.maxHp = e.hp;
-                        enemies.push(e);
-                    }
-                }
-                mapEditorCustomEnemies = [...data.enemies];
-                // ゴール再設定
-                goal = null;
-                for (let r=0; r<levelMap.length; r++) for (let c=0; c<(levelMap[r]||[]).length; c++) {
-                    if (levelMap[r][c]===5) {
-                        goal = {x:c*TILE, y:r*TILE - TILE*2, w:TILE, h:TILE*3, t:0};
-                        levelMap[r][c]=0;
-                    }
-                }
-                hubMessage = `マップロード完了 (Level ${currentLevelIdx})`;
-            } else {
-                hubMessage = 'このレベルの保存データなし';
-            }
+        }
+        // エディタ内ではエディタのレベル、そうでなければ現在のレベル
+        const targetIdx = (state === S.MAP_EDITOR) ? mapEditorLevelIdx : currentLevelIdx;
+        const data = mapEditorSavedMaps[targetIdx];
+        if (data) {
+            mapEditorLoadLevel(targetIdx);
+            hubMessage = `マップロード完了 (Level ${targetIdx}: ${LEVELS[targetIdx].name})`;
         } else {
-            hubMessage = '保存データなし';
+            hubMessage = `Level ${targetIdx} の保存データなし`;
         }
         hubMessageTimer = 120;
     } catch(err) {
@@ -4166,7 +4238,7 @@ function drawMapEditor() {
     }
 
     // パネル（右上）
-    const px2 = canvas.width - 200, py = 4, pw = 196, ph = 300;
+    const px2 = canvas.width - 200, py = 4, pw = 196, ph = 360;
     pxRect(px2, py, pw, ph, 'rgba(0,0,0,0.85)');
     pxRect(px2, py, pw, 3, '#ff0');
     ctx.fillStyle='#ff0'; ctx.font='bold 12px monospace';
@@ -4204,10 +4276,20 @@ function drawMapEditor() {
     const iy = ey + 34;
     ctx.fillStyle='#888'; ctx.font='9px monospace';
     ctx.fillText('クリック: 配置/消去', px2+8, iy);
-    ctx.fillText('Ctrl+S: 保存', px2+8, iy+14);
-    ctx.fillText('Ctrl+L: ロード', px2+8, iy+28);
-    ctx.fillText(`Level: ${currentLevelIdx}`, px2+8, iy+42);
-    ctx.fillText(`座標: ${hCol},${hRow}`, px2+8, iy+56);
+    ctx.fillText('AD/←→: カメラ移動', px2+8, iy+14);
+    ctx.fillText('Ctrl+S: 保存', px2+8, iy+28);
+    ctx.fillText('Ctrl+L: ロード', px2+8, iy+42);
+    ctx.fillText('PgUp/PgDn: レベル変更', px2+8, iy+56);
+    // レベル情報
+    const edLvl = LEVELS[mapEditorLevelIdx];
+    const edStg = Math.floor(mapEditorLevelIdx / 4) + 1;
+    const edLvlInStg = (mapEditorLevelIdx % 4) + 1;
+    const edIsBoss = edLvl && edLvl.boss;
+    ctx.fillStyle='#ff0'; ctx.font='bold 10px monospace';
+    ctx.fillText(`Level ${mapEditorLevelIdx}: S${edStg}-${edIsBoss?'BOSS':edLvlInStg}`, px2+8, iy+74);
+    ctx.fillStyle='#aaa'; ctx.font='9px monospace';
+    ctx.fillText(edLvl ? edLvl.name : '', px2+8, iy+86);
+    ctx.fillText(`座標: ${hCol},${hRow}`, px2+8, iy+100);
 
     // メッセージ表示
     if (hubMessageTimer > 0) {
@@ -4329,15 +4411,19 @@ function update() {
         updateHub();
         return;
     }
-    // マップエディタ: マウスドラッグでタイル連続配置
-    if (mapEditorActive && mouse.down && mapEditorMode === 'tile') {
-        const worldX = mouse.x + cameraX;
-        const worldY = mouse.y;
-        const col = Math.floor(worldX / TILE);
-        const row = Math.floor(worldY / TILE);
-        if (row >= 0 && row < levelMap.length && col >= 0 && col < (levelMap[0]||[]).length) {
-            levelMap[row][col] = mapEditorBrush;
+    // マップエディタは専用ステートで処理
+    if (state === S.MAP_EDITOR) {
+        // マウスドラッグでタイル連続配置
+        if (mouse.down && mapEditorMode === 'tile') {
+            const worldX = mouse.x + cameraX;
+            const worldY = mouse.y;
+            const col = Math.floor(worldX / TILE);
+            const row = Math.floor(worldY / TILE);
+            if (row >= 0 && row < levelMap.length && col >= 0 && col < (levelMap[0]||[]).length) {
+                levelMap[row][col] = mapEditorBrush;
+            }
         }
+        return;
     }
     if (state===S.READY) {
         readyTimer--;
@@ -4395,7 +4481,18 @@ function draw() {
         drawPlayer();
         drawPickupTexts(cameraX);
         drawHUD();
-        if (mapEditorActive) drawMapEditor();
+    } else if (state===S.MAP_EDITOR) {
+        // エディタ専用描画
+        const lvl = LEVELS[Math.min(mapEditorLevelIdx, LEVELS.length-1)];
+        // 背景
+        ctx.fillStyle = lvl.bg1 || '#000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = lvl.bg2 || '#111';
+        ctx.fillRect(0, canvas.height/2, canvas.width, canvas.height/2);
+        drawTiles();
+        drawGoal();
+        for (const e of enemies) e.draw(cameraX);
+        drawMapEditor();
     } else if (state===S.REWARD) {
         drawBackground();
         drawTiles();
